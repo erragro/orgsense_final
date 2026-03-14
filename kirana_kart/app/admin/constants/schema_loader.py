@@ -240,6 +240,19 @@ def _build() -> str:
 
         lines.append("")
 
+    # ── Warn LLM about empty tables so it never INNER JOINs them ────────────
+    empty_tables = [t for t in ordered if row_counts.get(t, 0) == 0]
+    if empty_tables:
+        lines += [
+            "⚠  EMPTY TABLES (0 rows) — NEVER USE THESE IN INNER JOINs — DOING SO RETURNS ZERO RESULTS:",
+            *[f"   • kirana_kart.{t}" for t in empty_tables],
+            "   If you must reference them, use LEFT JOIN only and handle NULLs.",
+            "   → For issue / topic classification use ticket_execution_summary.issue_l1 and issue_l2 directly.",
+            "   → Do NOT join issue_taxonomy — it is empty.",
+            "   → Do NOT join conversation_turns — it is empty.",
+            "",
+        ]
+
     lines += [
         "⚠  CRITICAL RULES FOR SEGMENT / PLATFORM FILTER:",
         "   • customers.segment holds the delivery platform: swiggy | blinkit | zomato | zepto | instamart | dunzo",
@@ -259,6 +272,9 @@ def _build() -> str:
         "     Customer queries: WHERE cu.segment = '<seg>' ONLY — absolutely NO date condition.",
         "     WRONG: WHERE cu.signup_date >= '2026-01-01' AND cu.segment = 'zomato'",
         "     RIGHT: WHERE cu.segment = 'zomato'",
+        "   • For issue / topic breakdowns use ticket_execution_summary.issue_l1 and issue_l2 directly.",
+        "     WRONG: JOIN kirana_kart.issue_taxonomy it ON tes.issue_l1 = it.code",
+        "     RIGHT:  SELECT tes.issue_l1, COUNT(*) FROM kirana_kart.ticket_execution_summary tes ...",
     ]
 
     return "\n".join(lines)

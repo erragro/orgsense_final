@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/Button'
 import { PaginationBar } from '@/components/common/PaginationBar'
 import { analyticsApi } from '@/api/governance/analytics.api'
 import type { EvaluationRecord, EvaluationResponse } from '@/types/analytics.types'
-import { formatCurrency, formatPercent } from '@/lib/utils'
+import { formatCurrency, formatDuration, formatPercent } from '@/lib/utils'
 import { cn } from '@/lib/cn'
 import { BarChart3, X } from 'lucide-react'
 
@@ -283,8 +283,8 @@ export default function AnalyticsPage() {
             <div className="space-y-4">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <StatCard label="Total Tickets"         value={summaryData.total_tickets.toLocaleString()} />
-                <StatCard label="Avg Processing"        value={`${summaryData.avg_duration_ms}ms`} />
-                <StatCard label="P95 Processing"        value={`${summaryData.p95_duration_ms}ms`} />
+                <StatCard label="Avg Processing"        value={formatDuration(summaryData.avg_duration_ms)} />
+                <StatCard label="P95 Processing"        value={formatDuration(summaryData.p95_duration_ms)} />
                 <StatCard label="Auto-Resolution Rate"  value={formatPercent(summaryData.auto_resolution_rate)} highlight="green" />
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -514,15 +514,13 @@ export default function AnalyticsPage() {
                       </div>
 
                       {evaluationData.total_pages > 1 && (
-                        <div className="p-3 border-t border-surface-border">
-                          <PaginationBar
-                            page={evalPage}
-                            totalPages={evaluationData.total_pages}
-                            onPageChange={setEvalPage}
-                            total={evaluationData.total}
-                            pageSize={PAGE_SIZE}
-                          />
-                        </div>
+                        <PaginationBar
+                          page={evalPage}
+                          totalPages={evaluationData.total_pages}
+                          onPageChange={setEvalPage}
+                          total={evaluationData.total}
+                          pageSize={PAGE_SIZE}
+                        />
                       )}
                     </>
                   )}

@@ -167,7 +167,17 @@
       "Bash(python3 -c \"import sys,json; mounts=json.load\\(sys.stdin\\); [print\\(m\\) for m in mounts]\")",
       "Bash(lsof -i :5432)",
       "Bash(curl -s -H \"X-Admin-Token: local_admin_token\" \"http://localhost:8001/analytics/evaluations?limit=3\")",
-      "Bash(curl -s -H \"X-Admin-Token: local_admin_token\" \"http://localhost:8001/analytics/evaluations?limit=100\")"
+      "Bash(curl -s -H \"X-Admin-Token: local_admin_token\" \"http://localhost:8001/analytics/evaluations?limit=100\")",
+      "Bash(docker ps --format \"table {{.ID}}\\\\t{{.Names}}\\\\t{{.Ports}}\")",
+      "Bash(docker stop a053a0d11bd0)",
+      "Bash(PGPASSWORD=\"REDACTED\" psql -h localhost -U orguser -d orgintelligence -c \":*)",
+      "Bash(docker cp /Users/apple/Documents/kirana_kart_final/kirana_kart/app/admin/constants/schema_loader.py kirana_kart_fullstackcopy-governance-1:/app/app/admin/constants/schema_loader.py)",
+      "Bash(docker-compose -f /Users/apple/Documents/kirana_kart_final/docker-compose.yml ps)",
+      "Bash(docker volume ls)",
+      "Bash(echo \"Exit: $?\")",
+      "Bash(echo \"Done: $?\")",
+      "Bash(docker stop temp-oldpg)",
+      "Bash(docker rm temp-oldpg)"
     ]
   }
 }

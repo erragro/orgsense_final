@@ -26,7 +26,6 @@ export function PaginationBar({ page, totalPages, onPageChange, total, pageSize 
         >
           <ChevronLeft className="w-3.5 h-3.5" />
         </Button>
-        <span className="text-xs text-muted px-2">{page} / {totalPages}</span>
         <Button
           variant="ghost"
           size="xs"
