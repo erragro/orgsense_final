@@ -54,6 +54,9 @@ services:
       LOG_FORMAT: text
       LOG_LEVEL: INFO
       PROMETHEUS_ENABLED: "false"
+      # BI Agent read-only credentials — SELECT-only role, not a superuser
+      BI_DB_USER: bi_readonly
+      BI_DB_PASSWORD: bi_readonly_pass
     depends_on:
       - postgres
       - redis

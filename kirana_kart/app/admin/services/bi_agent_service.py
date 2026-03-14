@@ -17,14 +17,52 @@ import os
 import re
 from typing import Generator
 
+from contextlib import contextmanager
+
 from openai import OpenAI
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import QueuePool
 
 from app.admin.db import get_db_session
 from app.admin.constants.bi_formulas import BI_FORMULAS, SQL_RULES
 from app.admin.constants.schema_loader import get_table_summary
+from app.config import settings
 
 logger = logging.getLogger("kirana_kart.bi_agent")
+
+# ============================================================
+# READ-ONLY ENGINE — used exclusively by execute_sql()
+# Connects as bi_readonly (SELECT-only role) so that even a
+# successful regex bypass cannot write, drop, or modify data.
+# ============================================================
+
+_bi_engine = create_engine(
+    settings.bi_database_url,
+    poolclass=QueuePool,
+    pool_size=3,
+    max_overflow=5,
+    pool_timeout=20,
+    pool_recycle=1800,
+    pool_pre_ping=True,
+    echo=False,
+)
+_BiSession = sessionmaker(bind=_bi_engine, autocommit=False, autoflush=False)
+
+
+@contextmanager
+def _get_bi_session():
+    """Read-only session for BI Agent query execution."""
+    session = _BiSession()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
 
 # ============================================================
 # SQL SAFETY — regex guards
@@ -33,7 +71,15 @@ logger = logging.getLogger("kirana_kart.bi_agent")
 _ALLOWED_RE = re.compile(r"^\s*SELECT\b", re.IGNORECASE)
 _FORBIDDEN_RE = re.compile(
     r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|EXEC|EXECUTE|"
-    r"GRANT|REVOKE|COPY|VACUUM|CALL|MERGE|REPLACE|LOAD|IMPORT)\b",
+    r"GRANT|REVOKE|COPY|VACUUM|CALL|MERGE|REPLACE|LOAD|IMPORT|"
+    # Dangerous superuser / file-system functions
+    r"pg_read_file|pg_write_file|pg_read_binary_file|pg_ls_dir|"
+    r"pg_stat_file|lo_export|lo_import|lo_create|lo_open|lo_write|lo_unlink|"
+    # Remote execution / extension abuse
+    r"dblink|pg_exec|plpython|plperlu|"
+    # Connection/session manipulation
+    r"pg_terminate_backend|pg_cancel_backend|pg_reload_conf|"
+    r"pg_rotate_logfile|pg_switch_wal)\b",
     re.IGNORECASE,
 )
 _SEMICOLON_SPLIT_RE = re.compile(r";")
@@ -182,9 +228,10 @@ def generate_sql(
 def execute_sql(sql: str) -> list[dict]:
     """
     Run the validated SELECT query and return up to 500 rows as a list of dicts.
-    Uses the shared SQLAlchemy session pool.
+    Uses the read-only bi_readonly engine — write operations are rejected at
+    the database level even if the regex guard is somehow bypassed.
     """
-    with get_db_session() as session:
+    with _get_bi_session() as session:
         result = session.execute(text(sql))
         keys = list(result.keys())
         rows = []
