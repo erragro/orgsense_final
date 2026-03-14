@@ -35,3 +35,6 @@ build/
 # secrets
 secrets.json
 config_local.py
+
+# Claude Code — local session state (permissions cache, not needed in repo)
+.claude/settings.local.json
