@@ -5,7 +5,7 @@ import { useAuthStore } from '@/stores/auth.store'
 import {
   LayoutDashboard, Ticket, TreeDeciduous,
   BookOpen, Shield, Users, BarChart3, Settings,
-  ChevronLeft, ChevronRight, LogOut, BrainCircuit, type LucideIcon,
+  ChevronLeft, ChevronRight, LogOut, BrainCircuit, FlaskConical, type LucideIcon,
 } from 'lucide-react'
 import { maskToken } from '@/lib/utils'
 import { ROLE_ACCESS, canAccess } from '@/lib/access'
@@ -30,6 +30,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', roles: ROLE_ACCESS.dashboard },
       { label: 'Tickets', icon: Ticket, path: '/tickets', roles: ROLE_ACCESS.tickets },
+      { label: 'Sandbox', icon: FlaskConical, path: '/sandbox', roles: ROLE_ACCESS.sandbox },
     ],
   },
   {
