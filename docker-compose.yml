@@ -1,0 +1,165 @@
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: orgintelligence
+      POSTGRES_USER: orguser
+      POSTGRES_PASSWORD: orgpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./kirana_kart/exports/kirana_kart_full_export_20260304_143135.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  weaviate:
+    image: semitechnologies/weaviate:1.29.4
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
+      DEFAULT_VECTORIZER_MODULE: "none"
+      CLUSTER_HOSTNAME: "node1"
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+
+  governance:
+    build:
+      context: ./kirana_kart
+    command: uvicorn app.admin.main:app --host 0.0.0.0 --port 8001
+    env_file:
+      - ./kirana_kart/.env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: orgintelligence
+      DB_USER: orguser
+      DB_PASSWORD: orgpassword
+      DB_SCHEMA: kirana_kart
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      WEAVIATE_HOST: weaviate
+      WEAVIATE_HTTP_PORT: "8080"
+      WEAVIATE_GRPC_PORT: "50051"
+      ADMIN_TOKEN: local_admin_token
+      LLM_API_BASE_URL: https://api.openai.com/v1
+      LOG_FORMAT: text
+      LOG_LEVEL: INFO
+      PROMETHEUS_ENABLED: "false"
+    depends_on:
+      - postgres
+      - redis
+      - weaviate
+    ports:
+      - "8001:8001"
+
+  ingest:
+    build:
+      context: ./kirana_kart
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    env_file:
+      - ./kirana_kart/.env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: orgintelligence
+      DB_USER: orguser
+      DB_PASSWORD: orgpassword
+      DB_SCHEMA: kirana_kart
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      WEAVIATE_HOST: weaviate
+      WEAVIATE_HTTP_PORT: "8080"
+      WEAVIATE_GRPC_PORT: "50051"
+      ADMIN_TOKEN: local_admin_token
+      LLM_API_BASE_URL: https://api.openai.com/v1
+      LOG_FORMAT: text
+      LOG_LEVEL: INFO
+      PROMETHEUS_ENABLED: "false"
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8000:8000"
+
+  # Stream poll loop — reads cardinal:dispatch Redis streams, dispatches to Celery broker
+  worker-poll:
+    build:
+      context: ./kirana_kart
+    command: python -m app.l4_agents.worker
+    env_file:
+      - ./kirana_kart/.env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: orgintelligence
+      DB_USER: orguser
+      DB_PASSWORD: orgpassword
+      DB_SCHEMA: kirana_kart
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      ADMIN_TOKEN: local_admin_token
+      LLM_API_BASE_URL: https://api.openai.com/v1
+      WEAVIATE_HOST: weaviate
+      LOG_FORMAT: text
+      LOG_LEVEL: INFO
+    depends_on:
+      - postgres
+      - redis
+      - ingest
+      - weaviate
+    restart: unless-stopped
+
+  # Celery worker — executes process_ticket tasks (4-stage LLM pipeline)
+  worker-celery:
+    build:
+      context: ./kirana_kart
+    command: celery -A app.l4_agents.worker.celery_app worker --loglevel=info --concurrency=2 --queues=cardinal
+    env_file:
+      - ./kirana_kart/.env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: orgintelligence
+      DB_USER: orguser
+      DB_PASSWORD: orgpassword
+      DB_SCHEMA: kirana_kart
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      ADMIN_TOKEN: local_admin_token
+      LLM_API_BASE_URL: https://api.openai.com/v1
+      WEAVIATE_HOST: weaviate
+      LOG_FORMAT: text
+      LOG_LEVEL: INFO
+    depends_on:
+      - postgres
+      - redis
+      - weaviate
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: ./kirana_kart_ui
+    environment:
+      VITE_GOVERNANCE_API_URL: http://localhost:8001
+      VITE_INGEST_API_URL: http://localhost:8000
+    depends_on:
+      - governance
+      - ingest
+    ports:
+      - "5173:5173"
+
+volumes:
+  pgdata:
+  weaviate_data:
