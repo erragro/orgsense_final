@@ -5,7 +5,7 @@
       "name": "kirana-kart-ui",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
-      "cwd": "/Users/apple/Documents/kirana_kart_fullstack copy/kirana_kart_ui",
+      "cwd": "/Users/apple/Documents/kirana_kart_final/kirana_kart_ui",
       "port": 5173
     }
   ]

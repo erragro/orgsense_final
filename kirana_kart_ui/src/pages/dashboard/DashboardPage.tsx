@@ -15,6 +15,7 @@ import { kbApi } from '@/api/governance/kb.api'
 import { shadowApi } from '@/api/governance/shadow.api'
 import { analyticsApi } from '@/api/governance/analytics.api'
 import { formatDate } from '@/lib/dates'
+import { formatDuration } from '@/lib/utils'
 import { Ticket, Activity, Database, Server } from 'lucide-react'
 
 const formatActionLabel = (value: string) =>
@@ -71,9 +72,8 @@ export default function DashboardPage() {
     value,
   }))
 
-  const ticketsToday = dailyTicketData.length
-    ? dailyTicketData[dailyTicketData.length - 1].count
-    : 0
+  const todayStr = new Date().toISOString().split('T')[0]
+  const ticketsToday = dailyTicketData.find((d) => d.date === todayStr)?.count ?? 0
 
   return (
     <div>
@@ -154,8 +154,8 @@ export default function DashboardPage() {
         />
         <StatCard
           label="Avg Processing"
-          value={analyticsLoading ? '—' : `${analyticsSummary?.avg_duration_ms ?? 0}`}
-          subtitle="ms per ticket"
+          value={analyticsLoading ? '—' : formatDuration(analyticsSummary?.avg_duration_ms)}
+          subtitle="per ticket"
           highlight="green"
         />
         <StatCard

@@ -71,30 +71,12 @@ Design principle:
 from __future__ import annotations
 
 import logging
-import os
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
 
-import psycopg2
-from dotenv import load_dotenv
-
+from app.admin.db import get_db_connection
 from app.l1_ingestion.schemas import CardinalIngestRequest
-
-# ============================================================
-# ENVIRONMENT
-# ============================================================
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-load_dotenv(PROJECT_ROOT / ".env")
-
-DB_HOST     = os.getenv("DB_HOST", "localhost")
-DB_PORT     = os.getenv("DB_PORT", "5432")
-DB_NAME     = os.getenv("DB_NAME", "orgintelligence")
-DB_USER     = os.getenv("DB_USER", "orguser")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-SCHEMA      = "kirana_kart"
 
 # Validation limits
 DESCRIPTION_MIN_LENGTH  = 10
@@ -146,20 +128,6 @@ class Phase1ValidationResult:
 
     def warn(self, message: str) -> None:
         self.warnings.append(message)
-
-
-# ============================================================
-# DB CONNECTION
-# ============================================================
-
-def _get_connection() -> psycopg2.extensions.connection:
-    return psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-    )
 
 
 # ============================================================
@@ -388,30 +356,30 @@ def _check_customer_blocked(
     if not cx_email and not customer_id:
         return False, None
 
-    conn = _get_connection()
     try:
-        with conn.cursor() as cur:
-            if customer_id:
-                cur.execute(
-                    f"""
-                    SELECT is_blocked, block_reason
-                    FROM   {SCHEMA}.customers
-                    WHERE  customer_id = %s
-                    LIMIT  1
-                    """,
-                    (customer_id,),
-                )
-            else:
-                cur.execute(
-                    f"""
-                    SELECT is_blocked, block_reason
-                    FROM   {SCHEMA}.customers
-                    WHERE  email = %s
-                    LIMIT  1
-                    """,
-                    (cx_email,),
-                )
-            row = cur.fetchone()
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                if customer_id:
+                    cur.execute(
+                        """
+                        SELECT is_blocked, block_reason
+                        FROM   kirana_kart.customers
+                        WHERE  customer_id = %s
+                        LIMIT  1
+                        """,
+                        (customer_id,),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT is_blocked, block_reason
+                        FROM   kirana_kart.customers
+                        WHERE  email = %s
+                        LIMIT  1
+                        """,
+                        (cx_email,),
+                    )
+                row = cur.fetchone()
 
         if not row:
             return False, None  # Unknown customer — let Phase 4 handle
@@ -419,15 +387,13 @@ def _check_customer_blocked(
         is_blocked, block_reason = row
         return bool(is_blocked), block_reason
 
-    except psycopg2.Error as exc:
+    except Exception as exc:
         # DB failure during block check — fail open (allow through) with warning
         # logged. A DB outage should not stop all ingest.
         logger.warning(
             "Customer block check DB query failed — failing open: %s", exc
         )
         return False, None
-    finally:
-        conn.close()
 
 
 def _check_order_exists(order_id: str) -> bool:
@@ -435,19 +401,17 @@ def _check_order_exists(order_id: str) -> bool:
     Verify order_id exists in the orders table.
     Returns True if found, False if not found or on DB error.
     """
-    conn = _get_connection()
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"SELECT 1 FROM {SCHEMA}.orders WHERE order_id = %s LIMIT 1",
-                (order_id,),
-            )
-            return cur.fetchone() is not None
-    except psycopg2.Error as exc:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM kirana_kart.orders WHERE order_id = %s LIMIT 1",
+                    (order_id,),
+                )
+                return cur.fetchone() is not None
+    except Exception as exc:
         logger.warning("order_id existence check failed: %s", exc)
         return True  # Fail open — don't block on DB error
-    finally:
-        conn.close()
 
 
 # ============================================================

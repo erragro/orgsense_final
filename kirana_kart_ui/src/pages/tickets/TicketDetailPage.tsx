@@ -16,7 +16,7 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { Button } from '@/components/ui/Button'
 import { ticketsApi } from '@/api/governance/tickets.api'
 import { formatDate } from '@/lib/dates'
-import { formatCurrency, formatPercent } from '@/lib/utils'
+import { formatCurrency, formatDuration, formatPercent } from '@/lib/utils'
 import { toast } from '@/stores/toast.store'
 import { cn } from '@/lib/cn'
 import {
@@ -311,7 +311,7 @@ export default function TicketDetailPage() {
                     {metrics.execution_id && <CopyButton text={metrics.execution_id} />}
                   </div>
                 </div>
-                <div><span className="text-subtle">Duration</span><p className="font-mono">{metrics.duration_ms ? `${metrics.duration_ms}ms` : '—'}</p></div>
+                <div><span className="text-subtle">Duration</span><p className="font-mono">{formatDuration(metrics.duration_ms)}</p></div>
                 <div><span className="text-subtle">Total Tokens</span><p className="font-mono">{metrics.total_tokens?.toLocaleString() ?? '—'}</p></div>
                 <div className="grid grid-cols-3 gap-1 pt-1">
                   {(['llm_1_tokens', 'llm_2_tokens', 'llm_3_tokens'] as const).map((k, i) => (
