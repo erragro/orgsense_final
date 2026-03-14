@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from app.l1_ingestion.schemas import CardinalIngestRequest
@@ -32,8 +32,12 @@ router = APIRouter(prefix="/cardinal", tags=["Cardinal"])
 logger = logging.getLogger("cardinal.routes")
 
 
+async def _raw_body(request: Request) -> bytes:
+    return await request.body()
+
+
 @router.post("/ingest")
-async def ingest(request: Request, body: CardinalIngestRequest):
+def ingest(request: Request, body: CardinalIngestRequest, raw_body: bytes = Depends(_raw_body)):
     """
     Ingest a ticket through the Cardinal pipeline.
 
@@ -50,9 +54,6 @@ async def ingest(request: Request, body: CardinalIngestRequest):
         500  — Internal system error
         503  — Service unavailable (policy missing or Redis down)
     """
-    # Extract raw body bytes for Phase 3 Freshdesk HMAC check
-    raw_body = await request.body()
-
     # Extract Bearer token for Phase 3 API token check
     auth_header = request.headers.get("Authorization", "")
     auth_token  = auth_header if auth_header else None
