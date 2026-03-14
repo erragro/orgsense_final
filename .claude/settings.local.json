@@ -182,7 +182,8 @@
       "Bash(docker cp /tmp/seed_tickets.py kirana_kart_final-governance-1:/tmp/seed_tickets.py)",
       "Bash(docker-compose up --build -d ui)",
       "Bash(docker-compose up --build -d)",
-      "Bash(docker-compose ps --format \"table {{.Name}}\\\\t{{.Status}}\\\\t{{.Ports}}\")"
+      "Bash(docker-compose ps --format \"table {{.Name}}\\\\t{{.Status}}\\\\t{{.Ports}}\")",
+      "Bash(docker ps --format \"table {{.Names}}\\\\t{{.Status}}\\\\t{{.Networks}}\")"
     ]
   }
 }

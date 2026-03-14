@@ -43,6 +43,7 @@ const CustomerDetailPage = lazy(() => import('@/pages/customers/CustomerDetailPa
 const AnalyticsPage = lazy(() => import('@/pages/analytics/AnalyticsPage'))
 const SystemPage = lazy(() => import('@/pages/system/SystemPage'))
 const BIAgentPage = lazy(() => import('@/pages/agents/BIAgentPage'))
+const SandboxPage = lazy(() => import('@/pages/sandbox/SandboxPage'))
 
 export const router = createBrowserRouter([
   {
@@ -74,6 +75,7 @@ export const router = createBrowserRouter([
       { path: 'system', element: protect(SystemPage, ROLE_ACCESS.system) },
       { path: 'system/*', element: protect(SystemPage, ROLE_ACCESS.system) },
       { path: 'bi-agent', element: protect(BIAgentPage, ROLE_ACCESS.biAgent) },
+      { path: 'sandbox', element: protect(SandboxPage, ROLE_ACCESS.sandbox) },
     ],
   },
 ])

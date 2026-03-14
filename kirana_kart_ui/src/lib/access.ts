@@ -10,6 +10,7 @@ export const ROLE_ACCESS = {
   analytics: ['viewer', 'editor', 'publisher'],
   system: ['publisher'],
   biAgent: ['viewer', 'editor', 'publisher'],
+  sandbox: ['editor', 'publisher'],
 } as const satisfies Record<string, readonly AdminRole[]>
 
 export type AccessKey = keyof typeof ROLE_ACCESS
