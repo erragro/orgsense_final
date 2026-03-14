@@ -177,7 +177,12 @@
       "Bash(echo \"Exit: $?\")",
       "Bash(echo \"Done: $?\")",
       "Bash(docker stop temp-oldpg)",
-      "Bash(docker rm temp-oldpg)"
+      "Bash(docker rm temp-oldpg)",
+      "Bash(docker cp /tmp/seed_tickets.py kirana_kart_final-postgres-1:/tmp/seed_tickets.py)",
+      "Bash(docker cp /tmp/seed_tickets.py kirana_kart_final-governance-1:/tmp/seed_tickets.py)",
+      "Bash(docker-compose up --build -d ui)",
+      "Bash(docker-compose up --build -d)",
+      "Bash(docker-compose ps --format \"table {{.Name}}\\\\t{{.Status}}\\\\t{{.Ports}}\")"
     ]
   }
 }

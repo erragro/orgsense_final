@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Search, X } from 'lucide-react'
 import { cn } from '@/lib/cn'
 
@@ -12,15 +12,19 @@ interface SearchInputProps {
 
 export function SearchInput({ value, onChange, placeholder = 'Search…', debounceMs = 300, className }: SearchInputProps) {
   const [local, setLocal] = useState(value)
+  // Keep a stable ref so the debounce effect doesn't re-fire when the parent
+  // re-renders and passes a new inline arrow function as onChange.
+  const onChangeRef = useRef(onChange)
+  useEffect(() => { onChangeRef.current = onChange })
 
   useEffect(() => {
     setLocal(value)
   }, [value])
 
   useEffect(() => {
-    const timer = setTimeout(() => onChange(local), debounceMs)
+    const timer = setTimeout(() => onChangeRef.current(local), debounceMs)
     return () => clearTimeout(timer)
-  }, [local, debounceMs, onChange])
+  }, [local, debounceMs]) // onChange intentionally omitted — use ref above
 
   return (
     <div className={cn('relative flex-1', className)}>
