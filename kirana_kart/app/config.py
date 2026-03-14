@@ -63,11 +63,28 @@ class Settings(BaseSettings):
     db_pool_timeout: int = Field(default=30,  alias="DB_POOL_TIMEOUT")
     db_pool_recycle: int = Field(default=3600, alias="DB_POOL_RECYCLE")
 
+    # Read-only credentials for the BI Agent — defaults to main user if not set.
+    # In production set BI_DB_USER=bi_readonly / BI_DB_PASSWORD=<pass> to
+    # restrict BI query execution to a SELECT-only role.
+    bi_db_user: str = Field(default="", alias="BI_DB_USER")
+    bi_db_password: str = Field(default="", alias="BI_DB_PASSWORD")
+
     @computed_field
     @property
     def database_url(self) -> str:
         return (
             f"postgresql+psycopg2://{self.db_user}:{self.db_password}"
+            f"@{self.db_host}:{self.db_port}/{self.db_name}"
+        )
+
+    @computed_field
+    @property
+    def bi_database_url(self) -> str:
+        """Read-only connection URL for the BI Agent query engine."""
+        user = self.bi_db_user or self.db_user
+        password = self.bi_db_password or self.db_password
+        return (
+            f"postgresql+psycopg2://{user}:{password}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
         )
 

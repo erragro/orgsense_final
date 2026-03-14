@@ -183,7 +183,8 @@
       "Bash(docker-compose up --build -d ui)",
       "Bash(docker-compose up --build -d)",
       "Bash(docker-compose ps --format \"table {{.Name}}\\\\t{{.Status}}\\\\t{{.Ports}}\")",
-      "Bash(docker ps --format \"table {{.Names}}\\\\t{{.Status}}\\\\t{{.Networks}}\")"
+      "Bash(docker ps --format \"table {{.Names}}\\\\t{{.Status}}\\\\t{{.Networks}}\")",
+      "Bash(docker-compose up --build -d governance)"
     ]
   }
 }
