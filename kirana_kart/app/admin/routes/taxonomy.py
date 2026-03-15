@@ -5,7 +5,6 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.admin.services.taxonomy_service import (
-    require_role,
     fetch_all_issues,
     add_issue,
     update_issue,
@@ -23,7 +22,7 @@ from app.admin.services.taxonomy_service import (
     save_draft,
 )
 
-from app.admin.routes.auth import authorize
+from app.admin.routes.auth import UserContext, require_permission
 
 from app.admin.services.vector_service import (
     vectorize_active,
@@ -32,6 +31,10 @@ from app.admin.services.vector_service import (
 )
 
 router = APIRouter(prefix="/taxonomy", tags=["taxonomy"])
+
+_view  = require_permission("taxonomy", "view")
+_edit  = require_permission("taxonomy", "edit")
+_admin = require_permission("taxonomy", "admin")
 
 
 # ============================================================
@@ -105,29 +108,25 @@ class VersionRequest(BaseModel):
 # ============================================================
 
 @router.get("/")
-def get_all(include_inactive: bool = Query(False), token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
+def get_all(include_inactive: bool = Query(False), _u: UserContext = Depends(_view)):
     rows = fetch_all_issues(include_inactive)
     return [format_issue(r) for r in rows]
 
 
 @router.get("/drafts")
-def drafts(token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
+def drafts(_u: UserContext = Depends(_view)):
     rows = get_draft_issues()
     return [format_draft(r) for r in rows]
 
 
 @router.get("/versions")
-def versions(token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
+def versions(_u: UserContext = Depends(_view)):
     rows = list_versions()
     return [format_version(r) for r in rows]
 
 
 @router.get("/version/{version_label}")
-def version_snapshot(version_label: str, token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
+def version_snapshot(version_label: str, _u: UserContext = Depends(_view)):
     snapshot = get_version_snapshot(version_label)
     return {
         "version_id": None,
@@ -140,27 +139,23 @@ def version_snapshot(version_label: str, token: str = Depends(authorize)):
 
 
 @router.get("/diff")
-def diff(from_version: str, to_version: str, token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
+def diff(from_version: str, to_version: str, _u: UserContext = Depends(_view)):
     return diff_versions(from_version, to_version)
 
 
 @router.get("/active-version")
-def active_version(token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
+def active_version(_u: UserContext = Depends(_view)):
     return {"active_version": get_active_version()}
 
 
 @router.get("/validate")
-def validate(token: str = Depends(authorize)):
-    require_role(token, ["editor", "publisher"])
+def validate(_u: UserContext = Depends(_edit)):
     errors = validate_taxonomy()
     return {"valid": len(errors) == 0, "errors": errors}
 
 
 @router.get("/audit")
-def audit(limit: int = 100, token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
+def audit(limit: int = 100, _u: UserContext = Depends(_view)):
     rows = fetch_audit_logs(limit)
     return [format_audit(r) for r in rows]
 
@@ -170,8 +165,7 @@ def audit(limit: int = 100, token: str = Depends(authorize)):
 # ============================================================
 
 @router.post("/draft/save")
-def save_draft_endpoint(payload: AddIssueRequest, token: str = Depends(authorize)):
-    require_role(token, ["editor", "publisher"])
+def save_draft_endpoint(payload: AddIssueRequest, _u: UserContext = Depends(_edit)):
     save_draft(
         payload.issue_code,
         payload.label,
@@ -187,8 +181,7 @@ def save_draft_endpoint(payload: AddIssueRequest, token: str = Depends(authorize
 # ============================================================
 
 @router.post("/add")
-def add(payload: AddIssueRequest, token: str = Depends(authorize)):
-    require_role(token, ["editor", "publisher"])
+def add(payload: AddIssueRequest, _u: UserContext = Depends(_edit)):
     snapshot = add_issue(
         payload.issue_code,
         payload.label,
@@ -200,8 +193,7 @@ def add(payload: AddIssueRequest, token: str = Depends(authorize)):
 
 
 @router.put("/update")
-def update(payload: UpdateIssueRequest, token: str = Depends(authorize)):
-    require_role(token, ["editor", "publisher"])
+def update(payload: UpdateIssueRequest, _u: UserContext = Depends(_edit)):
     snapshot = update_issue(
         payload.issue_code,
         payload.label,
@@ -211,15 +203,13 @@ def update(payload: UpdateIssueRequest, token: str = Depends(authorize)):
 
 
 @router.patch("/deactivate")
-def deactivate(payload: IssueCodeRequest, token: str = Depends(authorize)):
-    require_role(token, ["editor", "publisher"])
+def deactivate(payload: IssueCodeRequest, _u: UserContext = Depends(_edit)):
     snapshot = deactivate_issue(payload.issue_code)
     return {"status": "success", "snapshot_created": snapshot}
 
 
 @router.patch("/reactivate")
-def reactivate(payload: IssueCodeRequest, token: str = Depends(authorize)):
-    require_role(token, ["editor", "publisher"])
+def reactivate(payload: IssueCodeRequest, _u: UserContext = Depends(_edit)):
     snapshot = reactivate_issue(payload.issue_code)
     return {"status": "success", "snapshot_created": snapshot}
 
@@ -229,8 +219,7 @@ def reactivate(payload: IssueCodeRequest, token: str = Depends(authorize)):
 # ============================================================
 
 @router.post("/rollback")
-def rollback(payload: VersionRequest, token: str = Depends(authorize)):
-    require_role(token, ["publisher"])
+def rollback(payload: VersionRequest, _u: UserContext = Depends(_admin)):
     rollback_taxonomy(payload.version_label)
     return {"status": "rolled_back", "version": payload.version_label}
 
@@ -240,8 +229,7 @@ def rollback(payload: VersionRequest, token: str = Depends(authorize)):
 # ============================================================
 
 @router.post("/publish")
-def publish(payload: VersionRequest, token: str = Depends(authorize)):
-    require_role(token, ["publisher"])
+def publish(payload: VersionRequest, _u: UserContext = Depends(_admin)):
     publish_version_atomic(payload.version_label)
     return {
         "status": "published",
@@ -255,20 +243,17 @@ def publish(payload: VersionRequest, token: str = Depends(authorize)):
 # ============================================================
 
 @router.post("/vectorize-active")
-def vectorize_current(token: str = Depends(authorize)):
-    require_role(token, ["publisher"])
+def vectorize_current(_u: UserContext = Depends(_admin)):
     result = vectorize_active()
     return result
 
 
 @router.post("/vectorize-version")
-def vectorize_specific(payload: VersionRequest, token: str = Depends(authorize)):
-    require_role(token, ["publisher"])
+def vectorize_specific(payload: VersionRequest, _u: UserContext = Depends(_admin)):
     result = vectorize_version(payload.version_label)
     return result
 
 
 @router.get("/vector-status")
-def vector_state(token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
+def vector_state(_u: UserContext = Depends(_view)):
     return vector_status()

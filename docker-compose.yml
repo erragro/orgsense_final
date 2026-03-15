@@ -57,6 +57,29 @@ services:
       # BI Agent read-only credentials — SELECT-only role, not a superuser
       BI_DB_USER: bi_readonly
       BI_DB_PASSWORD: REDACTED
+      # JWT Auth
+      JWT_SECRET_KEY: REDACTED
+      JWT_ACCESS_EXPIRE_MINUTES: "60"
+      JWT_REFRESH_EXPIRE_DAYS: "30"
+      # Bootstrap super-admin (created on first startup if no users exist)
+      BOOTSTRAP_ADMIN_EMAIL: admin@kirana.local
+      BOOTSTRAP_ADMIN_PASSWORD: REDACTED
+      BOOTSTRAP_ADMIN_NAME: Super Admin
+      # OAuth — replace placeholders with real values, then run: docker-compose up -d governance
+      # GitHub  → github.com > Settings > Developer settings > OAuth Apps > New OAuth App
+      #           Callback URL: http://localhost:8001/auth/oauth/github/callback
+      OAUTH_REDIRECT_BASE_URL: http://localhost:8001
+      FRONTEND_URL: http://localhost:5173
+      GITHUB_CLIENT_ID: "GITHUB_CLIENT_ID_REMOVED"
+      GITHUB_CLIENT_SECRET: "GITHUB_SECRET_REMOVED"
+      # Google  → console.cloud.google.com > APIs & Services > Credentials > OAuth 2.0 Client
+      #           Redirect URI: http://localhost:8001/auth/oauth/google/callback
+      GOOGLE_CLIENT_ID: "YOUR_GOOGLE_CLIENT_ID"
+      GOOGLE_CLIENT_SECRET: "YOUR_GOOGLE_CLIENT_SECRET"
+      # Microsoft → portal.azure.com > App registrations > New registration
+      #             Redirect URI: http://localhost:8001/auth/oauth/microsoft/callback
+      MICROSOFT_CLIENT_ID: "YOUR_MICROSOFT_APPLICATION_CLIENT_ID"
+      MICROSOFT_CLIENT_SECRET: "YOUR_MICROSOFT_CLIENT_SECRET_VALUE"
     depends_on:
       - postgres
       - redis

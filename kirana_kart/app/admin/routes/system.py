@@ -5,15 +5,16 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 
 from app.admin.db import get_db_session
-from app.admin.routes.auth import authorize, require_role
+from app.admin.routes.auth import UserContext, require_permission
 
 router = APIRouter(prefix="/system", tags=["system"])
 
+_view  = require_permission("system", "view")
+_admin = require_permission("system", "admin")
+
 
 @router.get("/vector-jobs")
-def vector_jobs(token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
-
+def vector_jobs(_u: UserContext = Depends(_view)):
     with get_db_session() as session:
         rows = session.execute(
             text("""
@@ -32,10 +33,8 @@ def vector_jobs(token: str = Depends(authorize)):
 def audit_logs(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    token: str = Depends(authorize),
+    _u: UserContext = Depends(_view),
 ):
-    require_role(token, ["viewer", "editor", "publisher"])
-
     with get_db_session() as session:
         rows = session.execute(
             text("""
@@ -53,9 +52,7 @@ def audit_logs(
 
 
 @router.get("/models")
-def model_registry(token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
-
+def model_registry(_u: UserContext = Depends(_view)):
     with get_db_session() as session:
         rows = session.execute(
             text("""

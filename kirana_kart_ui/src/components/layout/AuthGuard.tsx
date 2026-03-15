@@ -2,10 +2,10 @@ import { Navigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth.store'
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const token = useAuthStore((s) => s.token)
+  const user = useAuthStore((s) => s.user)
   const location = useLocation()
 
-  if (!token) {
+  if (!user) {
     return <Navigate to="/login" state={{ from: location }} replace />
   }
 

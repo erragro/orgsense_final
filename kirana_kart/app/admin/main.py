@@ -24,7 +24,7 @@ from app.metrics import (
     vector_worker_running,
     vector_worker_last_heartbeat,
 )
-from app.admin.services.admin_user_service import ensure_bootstrap_admin
+from app.admin.services.auth_service import ensure_auth_tables, ensure_bootstrap_admin
 from app.admin.routes.bi_agent import ensure_bi_tables
 
 import logging
@@ -106,6 +106,7 @@ async def lifespan(app: FastAPI):
     # --- Startup ---
     configure_logging()
     configure_otel(app)
+    ensure_auth_tables()
     ensure_bootstrap_admin()
     ensure_bi_tables()
     start_background_worker()
@@ -131,11 +132,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS for local UI access
+# CORS for UI — allow credentials (needed for Authorization header)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=[settings.frontend_url, "http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -155,8 +156,9 @@ from app.admin.routes.tickets import router as tickets_router
 from app.admin.routes.customers import router as customers_router
 from app.admin.routes.analytics import router as analytics_router
 from app.admin.routes.system import router as system_router
-from app.admin.routes.admin_users import router as admin_users_router
 from app.admin.routes.session import router as session_router
+from app.admin.routes.auth_routes import router as auth_router
+from app.admin.routes.user_management import router as user_management_router
 from app.l1_ingestion.kb_registry.routes import router as kb_router
 from app.l45_ml_platform.compiler.routes import router as compiler_router
 from app.l45_ml_platform.vectorization.routes import router as vector_router
@@ -164,13 +166,14 @@ from app.l45_ml_platform.simulation.routes import router as simulation_router
 from app.l5_intelligence.policy_shadow.routes import router as shadow_router
 from app.admin.routes.bi_agent import router as bi_agent_router
 
+app.include_router(auth_router)
+app.include_router(session_router)
+app.include_router(user_management_router)
 app.include_router(taxonomy_router)
 app.include_router(tickets_router)
 app.include_router(customers_router)
 app.include_router(analytics_router)
 app.include_router(system_router)
-app.include_router(admin_users_router)
-app.include_router(session_router)
 app.include_router(kb_router)
 app.include_router(compiler_router)
 app.include_router(vector_router)

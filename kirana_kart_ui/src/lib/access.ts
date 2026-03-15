@@ -1,20 +1,34 @@
-import type { AdminRole } from '@/lib/constants'
+import type { User } from '@/stores/auth.store'
 
-export const ROLE_ACCESS = {
-  dashboard: ['viewer', 'editor', 'publisher'],
-  tickets: ['viewer', 'editor', 'publisher'],
-  taxonomy: ['viewer', 'editor', 'publisher'],
-  knowledgeBase: ['viewer', 'editor', 'publisher'],
-  policy: ['viewer', 'editor', 'publisher'],
-  customers: ['viewer', 'editor', 'publisher'],
-  analytics: ['viewer', 'editor', 'publisher'],
-  system: ['publisher'],
-  biAgent: ['viewer', 'editor', 'publisher'],
-  sandbox: ['editor', 'publisher'],
-} as const satisfies Record<string, readonly AdminRole[]>
+export type AppModule =
+  | 'dashboard'
+  | 'tickets'
+  | 'taxonomy'
+  | 'knowledgeBase'
+  | 'policy'
+  | 'customers'
+  | 'analytics'
+  | 'system'
+  | 'biAgent'
+  | 'sandbox'
 
-export type AccessKey = keyof typeof ROLE_ACCESS
+export type Permission = 'view' | 'edit' | 'admin'
 
-export function canAccess(role: AdminRole | null | undefined, allowed: readonly AdminRole[]) {
-  return !!role && allowed.includes(role)
+export function hasPermission(
+  user: User | null | undefined,
+  module: AppModule,
+  perm: Permission
+): boolean {
+  if (!user) return false
+  if (user.is_super_admin) return true
+  const mod = user.permissions?.[module]
+  if (!mod) return false
+  if (perm === 'view') return mod.view
+  if (perm === 'edit') return mod.edit
+  if (perm === 'admin') return mod.admin
+  return false
+}
+
+export function canView(user: User | null | undefined, module: AppModule): boolean {
+  return hasPermission(user, module, 'view')
 }

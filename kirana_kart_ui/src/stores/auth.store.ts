@@ -1,24 +1,42 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { AdminRole } from '@/lib/constants'
+
+export interface UserPermissions {
+  view: boolean
+  edit: boolean
+  admin: boolean
+}
+
+export interface User {
+  id: number
+  email: string
+  full_name: string
+  avatar_url?: string | null
+  is_super_admin: boolean
+  permissions: Record<string, UserPermissions>
+}
 
 interface AuthStore {
-  token: string | null
-  role: AdminRole | null
-  setAuth: (token: string, role: AdminRole) => void
+  accessToken: string | null
+  refreshToken: string | null
+  user: User | null
+  setAuth: (accessToken: string, refreshToken: string, user: User) => void
+  setAccessToken: (token: string) => void
   logout: () => void
 }
 
 export const useAuthStore = create<AuthStore>()(
   persist(
     (set) => ({
-      token: null,
-      role: null,
-      setAuth: (token, role) => set({ token, role }),
-      logout: () => set({ token: null, role: null }),
+      accessToken: null,
+      refreshToken: null,
+      user: null,
+      setAuth: (accessToken, refreshToken, user) => set({ accessToken, refreshToken, user }),
+      setAccessToken: (accessToken) => set({ accessToken }),
+      logout: () => set({ accessToken: null, refreshToken: null, user: null }),
     }),
     {
-      name: 'kk_admin_token',
+      name: 'kk_auth',
     }
   )
 )

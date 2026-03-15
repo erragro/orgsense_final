@@ -17,11 +17,12 @@ import os
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
 
+from app.admin.routes.auth import UserContext, require_permission
 from .policy_simulation_service import PolicySimulationService
 
 
@@ -58,6 +59,8 @@ router = APIRouter(
 logger = logging.getLogger("simulation_routes")
 logger.setLevel(logging.INFO)
 
+_admin = require_permission("policy", "admin")
+
 
 # ============================================================
 # REQUEST MODEL
@@ -73,7 +76,7 @@ class SimulationRequest(BaseModel):
 # ============================================================
 
 @router.post("/run")
-def run_simulation(request: SimulationRequest):
+def run_simulation(request: SimulationRequest, _u: UserContext = Depends(_admin)):
     """
     Run simulation comparing two policy versions.
     """
