@@ -5,7 +5,7 @@ BI Agent routes — governance plane (port 8001).
 
 Endpoints:
   GET  /bi-agent/modules               → taxonomy issue types for filter dropdown
-  GET  /bi-agent/sessions              → list chat sessions for current token
+  GET  /bi-agent/sessions              → list chat sessions for current user
   POST /bi-agent/sessions              → create new chat session
   PATCH /bi-agent/sessions/{id}        → rename session
   DELETE /bi-agent/sessions/{id}       → delete session + messages
@@ -15,18 +15,16 @@ Endpoints:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.admin.db import get_db_session, engine
-from app.admin.routes.auth import authorize, require_role
+from app.admin.routes.auth import UserContext, require_permission
 from app.admin.services.bi_agent_service import (
     understand_question,
     generate_sql,
@@ -39,6 +37,8 @@ logger = logging.getLogger("kirana_kart.bi_agent")
 
 router = APIRouter(prefix="/bi-agent", tags=["bi-agent"])
 
+_view = require_permission("biAgent", "view")
+
 
 # ============================================================
 # STARTUP — ensure tables exist
@@ -50,7 +50,7 @@ def ensure_bi_tables() -> None:
     CREATE TABLE IF NOT EXISTS kirana_kart.bi_chat_sessions (
         id          SERIAL PRIMARY KEY,
         label       VARCHAR(200) NOT NULL DEFAULT 'New Chat',
-        token_hash  VARCHAR(64)  NOT NULL,
+        user_id     INTEGER      NOT NULL,
         created_at  TIMESTAMPTZ  DEFAULT NOW(),
         updated_at  TIMESTAMPTZ  DEFAULT NOW()
     );
@@ -72,14 +72,6 @@ def ensure_bi_tables() -> None:
         logger.info("BI chat tables ensured.")
     except Exception as exc:
         logger.error("Failed to create BI chat tables: %s", exc)
-
-
-# ============================================================
-# HELPERS
-# ============================================================
-
-def _token_hash(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
 
 
 # ============================================================
@@ -107,9 +99,7 @@ class QueryRequest(BaseModel):
 # ============================================================
 
 @router.get("/modules")
-def get_modules(token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
-
+def get_modules(user: UserContext = Depends(_view)):
     with get_db_session() as session:
         rows = session.execute(
             text("""
@@ -131,19 +121,16 @@ def get_modules(token: str = Depends(authorize)):
 # ============================================================
 
 @router.get("/sessions")
-def list_sessions(token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
-    th = _token_hash(token)
-
+def list_sessions(user: UserContext = Depends(_view)):
     with get_db_session() as session:
         rows = session.execute(
             text("""
                 SELECT id, label, created_at, updated_at
                 FROM kirana_kart.bi_chat_sessions
-                WHERE token_hash = :th
+                WHERE user_id = :uid
                 ORDER BY updated_at DESC
             """),
-            {"th": th},
+            {"uid": user.id},
         ).mappings().all()
 
     return [dict(r) for r in rows]
@@ -156,19 +143,16 @@ def list_sessions(token: str = Depends(authorize)):
 @router.post("/sessions", status_code=201)
 def create_session(
     body: CreateSessionRequest,
-    token: str = Depends(authorize),
+    user: UserContext = Depends(_view),
 ):
-    require_role(token, ["viewer", "editor", "publisher"])
-    th = _token_hash(token)
-
     with get_db_session() as session:
         row = session.execute(
             text("""
-                INSERT INTO kirana_kart.bi_chat_sessions (label, token_hash)
-                VALUES (:label, :th)
+                INSERT INTO kirana_kart.bi_chat_sessions (label, user_id)
+                VALUES (:label, :uid)
                 RETURNING id, label, created_at, updated_at
             """),
-            {"label": body.label, "th": th},
+            {"label": body.label, "uid": user.id},
         ).mappings().first()
 
     return dict(row)
@@ -182,20 +166,17 @@ def create_session(
 def rename_session(
     session_id: int,
     body: RenameSessionRequest,
-    token: str = Depends(authorize),
+    user: UserContext = Depends(_view),
 ):
-    require_role(token, ["viewer", "editor", "publisher"])
-    th = _token_hash(token)
-
     with get_db_session() as session:
         row = session.execute(
             text("""
                 UPDATE kirana_kart.bi_chat_sessions
                 SET label = :label, updated_at = NOW()
-                WHERE id = :sid AND token_hash = :th
+                WHERE id = :sid AND user_id = :uid
                 RETURNING id, label, updated_at
             """),
-            {"label": body.label, "sid": session_id, "th": th},
+            {"label": body.label, "sid": session_id, "uid": user.id},
         ).mappings().first()
 
     if not row:
@@ -210,18 +191,15 @@ def rename_session(
 @router.delete("/sessions/{session_id}", status_code=204)
 def delete_session(
     session_id: int,
-    token: str = Depends(authorize),
+    user: UserContext = Depends(_view),
 ):
-    require_role(token, ["viewer", "editor", "publisher"])
-    th = _token_hash(token)
-
     with get_db_session() as session:
         result = session.execute(
             text("""
                 DELETE FROM kirana_kart.bi_chat_sessions
-                WHERE id = :sid AND token_hash = :th
+                WHERE id = :sid AND user_id = :uid
             """),
-            {"sid": session_id, "th": th},
+            {"sid": session_id, "uid": user.id},
         )
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -234,19 +212,15 @@ def delete_session(
 @router.get("/sessions/{session_id}/messages")
 def get_messages(
     session_id: int,
-    token: str = Depends(authorize),
+    user: UserContext = Depends(_view),
 ):
-    require_role(token, ["viewer", "editor", "publisher"])
-    th = _token_hash(token)
-
-    # Verify ownership
     with get_db_session() as session:
         owner = session.execute(
             text("""
                 SELECT id FROM kirana_kart.bi_chat_sessions
-                WHERE id = :sid AND token_hash = :th
+                WHERE id = :sid AND user_id = :uid
             """),
-            {"sid": session_id, "th": th},
+            {"sid": session_id, "uid": user.id},
         ).first()
         if not owner:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -271,19 +245,16 @@ def get_messages(
 @router.post("/query")
 async def query_stream(
     body: QueryRequest,
-    token: str = Depends(authorize),
+    user: UserContext = Depends(_view),
 ):
-    require_role(token, ["viewer", "editor", "publisher"])
-    th = _token_hash(token)
-
     # Verify session ownership
     with get_db_session() as session:
         owner = session.execute(
             text("""
                 SELECT id FROM kirana_kart.bi_chat_sessions
-                WHERE id = :sid AND token_hash = :th
+                WHERE id = :sid AND user_id = :uid
             """),
-            {"sid": body.session_id, "th": th},
+            {"sid": body.session_id, "uid": user.id},
         ).first()
     if not owner:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -296,14 +267,12 @@ async def query_stream(
         final_sql = ""
 
         try:
-            # ── Step 1: Understand question ──────────────────────────
             yield _sse_event({"type": "status", "text": "Understanding your question…"})
 
             intent = understand_question(
                 body.question, body.module, body.date_from, body.date_to
             )
 
-            # ── Step 2: Generate SQL ──────────────────────────────────
             yield _sse_event({"type": "status", "text": "Generating SQL query…"})
 
             raw_sql = generate_sql(intent, body.module, body.date_from, body.date_to)
@@ -317,7 +286,6 @@ async def query_stream(
             final_sql = clean_sql
             yield _sse_event({"type": "sql", "query": clean_sql})
 
-            # ── Step 3: Execute SQL ───────────────────────────────────
             yield _sse_event({"type": "status", "text": "Querying the database…"})
 
             try:
@@ -330,9 +298,7 @@ async def query_stream(
             row_count = len(rows)
             yield _sse_event({"type": "status", "text": f"Analysing {row_count} rows…"})
 
-            # ── Step 4: Stream analyst response ──────────────────────
             for chunk in stream_response(body.question, intent, clean_sql, rows):
-                # chunk is already an SSE string; extract text for saving
                 try:
                     inner = json.loads(chunk.removeprefix("data: ").strip())
                     assistant_content += inner.get("text", "")
@@ -346,7 +312,6 @@ async def query_stream(
             logger.error("BI Agent stream error: %s", exc, exc_info=True)
             yield _sse_event({"type": "error", "text": "An unexpected error occurred. Please try again."})
         finally:
-            # Persist both messages to DB
             try:
                 with get_db_session() as session:
                     session.execute(
@@ -370,7 +335,6 @@ async def query_stream(
                                 "sql": final_sql or None,
                             },
                         )
-                    # Touch session updated_at
                     session.execute(
                         text("""
                             UPDATE kirana_kart.bi_chat_sessions

@@ -14,9 +14,10 @@ Delegates to CompilerService.
 """
 
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from typing import Dict
 
+from app.admin.routes.auth import UserContext, require_permission
 from .compiler_service import CompilerService
 
 
@@ -34,36 +35,28 @@ logger.setLevel(logging.INFO)
 
 compiler_service = CompilerService()
 
+_admin = require_permission("knowledgeBase", "admin")
+
 
 # ============================================================
 # COMPILE LATEST DRAFT
 # ============================================================
 
 @router.post("/compile-latest")
-def compile_latest() -> Dict:
-
+def compile_latest(_u: UserContext = Depends(_admin)) -> Dict:
     """
     Compiles the most recently uploaded KB draft.
     """
-
     try:
-
         result = compiler_service.compile_latest_draft()
-
         return {
             "status": "success",
             "message": "Draft compiled successfully",
             "result": result
         }
-
     except Exception as e:
-
         logger.error(f"Compile latest failed: {str(e)}")
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================
@@ -71,30 +64,20 @@ def compile_latest() -> Dict:
 # ============================================================
 
 @router.post("/compile-version/{version_label}")
-def compile_version(version_label: str) -> Dict:
-
+def compile_version(version_label: str, _u: UserContext = Depends(_admin)) -> Dict:
     """
     Compiles a specific KB version.
     """
-
     try:
-
         result = compiler_service.compile_version(version_label)
-
         return {
             "status": "success",
             "version_label": version_label,
             "result": result
         }
-
     except Exception as e:
-
         logger.error(f"Compile version failed: {str(e)}")
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================
@@ -102,24 +85,14 @@ def compile_version(version_label: str) -> Dict:
 # ============================================================
 
 @router.get("/status/{version_label}")
-def compilation_status(version_label: str):
-
+def compilation_status(version_label: str, _u: UserContext = Depends(_admin)):
     """
     Returns compilation status for a policy version.
     """
-
     conn = None
-
     try:
-
         conn = compiler_service._get_connection()
-
         with conn.cursor() as cur:
-
-            # --------------------------------------------------
-            # Policy Version Status
-            # --------------------------------------------------
-
             cur.execute("""
                 SELECT policy_version,
                        artifact_hash,
@@ -127,19 +100,10 @@ def compilation_status(version_label: str):
                 FROM kirana_kart.policy_versions
                 WHERE policy_version = %s
             """, (version_label,))
-
             policy_row = cur.fetchone()
 
             if not policy_row:
-
-                raise HTTPException(
-                    status_code=404,
-                    detail="Policy version not found"
-                )
-
-            # --------------------------------------------------
-            # Raw Document Status
-            # --------------------------------------------------
+                raise HTTPException(status_code=404, detail="Policy version not found")
 
             cur.execute("""
                 SELECT registry_status
@@ -148,7 +112,6 @@ def compilation_status(version_label: str):
                 ORDER BY uploaded_at DESC
                 LIMIT 1
             """, (version_label,))
-
             raw_row = cur.fetchone()
 
         return {
@@ -157,20 +120,11 @@ def compilation_status(version_label: str):
             "is_active": policy_row[2],
             "raw_status": raw_row[0] if raw_row else None
         }
-
     except HTTPException:
         raise
-
     except Exception as e:
-
         logger.error(f"Status fetch failed: {str(e)}")
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
-
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
-
         if conn:
             conn.close()

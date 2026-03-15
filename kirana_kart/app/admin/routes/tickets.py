@@ -13,7 +13,7 @@ import json
 
 from app.admin.db import get_db_session
 from app.admin.redis_client import get_redis
-from app.admin.routes.auth import authorize, require_role
+from app.admin.routes.auth import UserContext, require_permission
 from app.l1_ingestion.schemas import CanonicalPayload
 from app.l2_cardinal.phase3_handler import Phase3Result
 from app.l2_cardinal import phase4_enricher
@@ -21,6 +21,9 @@ from app.l2_cardinal import phase4_enricher
 router = APIRouter(prefix="/tickets", tags=["tickets"])
 
 STREAM_P3 = "cardinal:dispatch:P3_STANDARD"
+
+_view = require_permission("tickets", "view")
+_edit = require_permission("tickets", "edit")
 
 
 class DispatchRequest(BaseModel):
@@ -36,10 +39,8 @@ def list_tickets(
     search: str | None = None,
     module: str | None = None,
     pipeline_stage: str | None = None,
-    token: str = Depends(authorize),
+    _u: UserContext = Depends(_view),
 ):
-    require_role(token, ["viewer", "editor", "publisher"])
-
     filters: list[str] = []
     params: dict[str, object] = {}
 
@@ -102,9 +103,7 @@ def list_tickets(
 
 
 @router.get("/{ticket_id}")
-def get_ticket(ticket_id: int, token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
-
+def get_ticket(ticket_id: int, _u: UserContext = Depends(_view)):
     with get_db_session() as session:
         ticket = session.execute(
             text("""
@@ -230,10 +229,8 @@ def get_ticket(ticket_id: int, token: str = Depends(authorize)):
 @router.post("/dispatch")
 def dispatch_tickets(
     payload: DispatchRequest,
-    token: str = Depends(authorize),
+    _u: UserContext = Depends(_edit),
 ):
-    require_role(token, ["viewer", "editor", "publisher"])
-
     with get_db_session() as session:
         if payload.ticket_ids:
             ticket_ids = list(dict.fromkeys(payload.ticket_ids))[:100]
@@ -344,8 +341,6 @@ def dispatch_tickets(
 
             r.xadd(name=STREAM_P3, fields=message, maxlen=10_000, approximate=True)
 
-            # Create execution plan and processing state rows so the worker
-            # can track stage progress via _claim_ticket / _update_stage_status
             session.execute(
                 text("""
                     INSERT INTO kirana_kart.cardinal_execution_plans

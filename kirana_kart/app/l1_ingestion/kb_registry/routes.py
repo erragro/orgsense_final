@@ -13,7 +13,7 @@ This layer:
 - Contains NO business logic
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, field_validator
 from sqlalchemy import create_engine, text
@@ -22,6 +22,7 @@ from pathlib import Path
 import os
 import logging
 
+from app.admin.routes.auth import UserContext, require_permission
 from .kb_registry_service import KBRegistryService
 
 
@@ -53,6 +54,10 @@ service = KBRegistryService(engine)
 router = APIRouter(prefix="/kb", tags=["KB Registry"])
 
 logger = logging.getLogger("kb_routes")
+
+_kb_view  = require_permission("knowledgeBase", "view")
+_kb_edit  = require_permission("knowledgeBase", "edit")
+_kb_admin = require_permission("knowledgeBase", "admin")
 logging.basicConfig(level=logging.INFO)
 
 
@@ -95,7 +100,7 @@ class PublishRequest(BaseModel):
 # ------------------------------------------------------------
 
 @router.post("/upload")
-def upload_kb(request: UploadRequest):
+def upload_kb(request: UploadRequest, _u: UserContext = Depends(_kb_edit)):
 
     try:
 
@@ -123,7 +128,7 @@ def upload_kb(request: UploadRequest):
 # ------------------------------------------------------------
 
 @router.put("/update/{raw_id}")
-def update_kb(raw_id: int, request: UpdateRequest):
+def update_kb(raw_id: int, request: UpdateRequest, _u: UserContext = Depends(_kb_edit)):
 
     try:
 
@@ -148,7 +153,7 @@ def update_kb(raw_id: int, request: UpdateRequest):
 # ------------------------------------------------------------
 
 @router.post("/publish")
-def publish_kb(request: PublishRequest):
+def publish_kb(request: PublishRequest, _u: UserContext = Depends(_kb_admin)):
 
     try:
 
@@ -175,7 +180,7 @@ def publish_kb(request: PublishRequest):
 # ------------------------------------------------------------
 
 @router.post("/rollback/{version_label}")
-def rollback_kb(version_label: str):
+def rollback_kb(version_label: str, _u: UserContext = Depends(_kb_admin)):
 
     try:
 
@@ -193,7 +198,7 @@ def rollback_kb(version_label: str):
 # ------------------------------------------------------------
 
 @router.get("/raw/{raw_id}")
-def get_raw(raw_id: int):
+def get_raw(raw_id: int, _u: UserContext = Depends(_kb_view)):
 
     try:
 
@@ -217,7 +222,7 @@ def get_raw(raw_id: int):
 # ------------------------------------------------------------
 
 @router.get("/active/{document_id}")
-def get_active(document_id: str):
+def get_active(document_id: str, _u: UserContext = Depends(_kb_view)):
 
     try:
 
@@ -245,7 +250,7 @@ def get_active(document_id: str):
 # ------------------------------------------------------------
 
 @router.get("/active-version")
-def get_active_policy_version():
+def get_active_policy_version(_u: UserContext = Depends(_kb_view)):
 
     try:
 
@@ -276,7 +281,7 @@ def get_active_policy_version():
 # ------------------------------------------------------------
 
 @router.get("/version/{version}")
-def get_policy_version(version: str):
+def get_policy_version(version: str, _u: UserContext = Depends(_kb_view)):
 
     try:
 
@@ -306,7 +311,7 @@ def get_policy_version(version: str):
 # ------------------------------------------------------------
 
 @router.get("/versions")
-def list_policy_versions():
+def list_policy_versions(_u: UserContext = Depends(_kb_view)):
 
     try:
 
@@ -330,7 +335,7 @@ def list_policy_versions():
 # ------------------------------------------------------------
 
 @router.get("/uploads")
-def list_raw_uploads():
+def list_raw_uploads(_u: UserContext = Depends(_kb_view)):
 
     try:
 

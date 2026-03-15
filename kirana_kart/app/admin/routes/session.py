@@ -2,13 +2,19 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.admin.routes.auth import authorize
-from app.admin.services.taxonomy_service import get_user_role
+from app.admin.services.auth_service import UserContext, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.get("/me")
-def me(token: str = Depends(authorize)):
-    role = get_user_role(token)
-    return {"role": role}
+def me(user: UserContext = Depends(get_current_user)):
+    """Return the current user's profile and permissions from the JWT."""
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "avatar_url": user.avatar_url,
+        "is_super_admin": user.is_super_admin,
+        "permissions": user.permissions,
+    }

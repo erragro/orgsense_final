@@ -6,9 +6,11 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 
 from app.admin.db import get_db_session
-from app.admin.routes.auth import authorize, require_role
+from app.admin.routes.auth import UserContext, require_permission
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
+
+_view = require_permission("analytics", "view")
 
 
 def _parse_date(value: str | None) -> str | None:
@@ -36,10 +38,8 @@ def _parse_bool(value: str | None) -> bool | None:
 def analytics_summary(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
-    token: str = Depends(authorize),
+    _u: UserContext = Depends(_view),
 ):
-    require_role(token, ["viewer", "editor", "publisher"])
-
     date_from = _parse_date(date_from)
     date_to = _parse_date(date_to)
 
@@ -220,10 +220,8 @@ def refund_list(
     limit: int = Query(50, ge=1, le=200),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
-    token: str = Depends(authorize),
+    _u: UserContext = Depends(_view),
 ):
-    require_role(token, ["viewer", "editor", "publisher"])
-
     date_from = _parse_date(date_from)
     date_to = _parse_date(date_to)
 
@@ -258,11 +256,7 @@ def refund_list(
 
 
 @router.get("/evaluation-filters")
-def evaluation_filters(
-    token: str = Depends(authorize),
-):
-    require_role(token, ["viewer", "editor", "publisher"])
-
+def evaluation_filters(_u: UserContext = Depends(_view)):
     with get_db_session() as session:
         def _distinct(query: str) -> list[str]:
             return [row[0] for row in session.execute(text(query)).all() if row[0]]
@@ -297,10 +291,8 @@ def evaluation_rows(
     greedy_classification: str | None = Query(None),
     override_applied: str | None = Query(None),
     pipeline_stage: str | None = Query(None),
-    token: str = Depends(authorize),
+    _u: UserContext = Depends(_view),
 ):
-    require_role(token, ["viewer", "editor", "publisher"])
-
     date_from = _parse_date(date_from)
     date_to = _parse_date(date_to)
     standard_logic_passed_bool = _parse_bool(standard_logic_passed)
@@ -378,16 +370,12 @@ def evaluation_rows(
                     fd.pipeline_stage,
                     COALESCE(l2.order_id, l3.order_id, l1.order_id) AS order_id,
                     fd.canonical_payload->>'customer_id' AS customer_id,
-
-                    -- Source Data (LLM Output 1 + canonical_payload)
                     l1.issue_type_l1 AS source_issue_l1,
                     l1.issue_type_l2 AS source_issue_l2,
                     l2.fraud_segment AS source_fraud_segment,
                     l2.value_segment AS source_value_segment,
                     l2.order_value AS source_order_value,
                     l2.calculated_gratification AS source_complaint_amount,
-
-                    -- Evaluated (LLM Output 2)
                     l2.issue_type_l1_verified AS eval_issue_l1,
                     l2.issue_type_l2_verified AS eval_issue_l2,
                     l2.standard_logic_passed AS eval_standard_logic_passed,
@@ -411,8 +399,6 @@ def evaluation_rows(
                     l2.evaluation_confidence AS eval_evaluation_confidence,
                     l2.action_confidence AS eval_action_confidence,
                     l2.model_used AS eval_model_used,
-
-                    -- Validated (LLM Output 3)
                     l3.validation_standard_logic AS val_standard_logic,
                     l3.validation_greedy_check AS val_greedy_check,
                     l3.validation_multiplier AS val_multiplier_check,

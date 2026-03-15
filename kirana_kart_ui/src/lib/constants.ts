@@ -25,9 +25,6 @@ export const PIPELINE_STAGES = {
   FAILED: 'FAILED',
 } as const
 
-export const ADMIN_ROLES = ['viewer', 'editor', 'publisher'] as const
-export type AdminRole = (typeof ADMIN_ROLES)[number]
-
 export const VECTOR_JOB_STATUSES = ['pending', 'running', 'completed', 'failed'] as const
 export type VectorJobStatus = (typeof VECTOR_JOB_STATUSES)[number]
 

@@ -5,9 +5,11 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 
 from app.admin.db import get_db_session
-from app.admin.routes.auth import authorize, require_role
+from app.admin.routes.auth import UserContext, require_permission
 
 router = APIRouter(prefix="/customers", tags=["customers"])
+
+_view = require_permission("customers", "view")
 
 
 @router.get("/")
@@ -16,10 +18,8 @@ def list_customers(
     limit: int = Query(25, ge=1, le=200),
     search: str | None = None,
     segment: str | None = None,
-    token: str = Depends(authorize),
+    _u: UserContext = Depends(_view),
 ):
-    require_role(token, ["viewer", "editor", "publisher"])
-
     filters: list[str] = []
     params: dict[str, object] = {}
 
@@ -64,9 +64,7 @@ def list_customers(
 
 
 @router.get("/{customer_id}")
-def get_customer(customer_id: str, token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
-
+def get_customer(customer_id: str, _u: UserContext = Depends(_view)):
     with get_db_session() as session:
         row = session.execute(
             text("""
@@ -87,9 +85,7 @@ def get_customer(customer_id: str, token: str = Depends(authorize)):
 
 
 @router.get("/{customer_id}/orders")
-def get_orders(customer_id: str, token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
-
+def get_orders(customer_id: str, _u: UserContext = Depends(_view)):
     with get_db_session() as session:
         rows = session.execute(
             text("""
@@ -108,9 +104,7 @@ def get_orders(customer_id: str, token: str = Depends(authorize)):
 
 
 @router.get("/{customer_id}/tickets")
-def get_customer_tickets(customer_id: str, token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
-
+def get_customer_tickets(customer_id: str, _u: UserContext = Depends(_view)):
     with get_db_session() as session:
         rows = session.execute(
             text("""
@@ -139,9 +133,7 @@ def get_customer_tickets(customer_id: str, token: str = Depends(authorize)):
 
 
 @router.get("/{customer_id}/csat")
-def get_customer_csat(customer_id: str, token: str = Depends(authorize)):
-    require_role(token, ["viewer", "editor", "publisher"])
-
+def get_customer_csat(customer_id: str, _u: UserContext = Depends(_view)):
     with get_db_session() as session:
         rows = session.execute(
             text("""

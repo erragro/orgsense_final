@@ -5,17 +5,17 @@ import { useAuthStore } from '@/stores/auth.store'
 import {
   LayoutDashboard, Ticket, TreeDeciduous,
   BookOpen, Shield, Users, BarChart3, Settings,
-  ChevronLeft, ChevronRight, LogOut, BrainCircuit, FlaskConical, type LucideIcon,
+  ChevronLeft, ChevronRight, LogOut, BrainCircuit, FlaskConical, UserCog, type LucideIcon,
 } from 'lucide-react'
-import { maskToken } from '@/lib/utils'
-import { ROLE_ACCESS, canAccess } from '@/lib/access'
-import type { AdminRole } from '@/lib/constants'
+import { hasPermission, type AppModule, type Permission } from '@/lib/access'
+import type { User } from '@/stores/auth.store'
 
 interface NavItem {
   label: string
   icon: LucideIcon
   path: string
-  roles: readonly AdminRole[]
+  module: AppModule
+  permission?: Permission
   highlight?: boolean
 }
 
@@ -28,43 +28,48 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Operations',
     items: [
-      { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', roles: ROLE_ACCESS.dashboard },
-      { label: 'Tickets', icon: Ticket, path: '/tickets', roles: ROLE_ACCESS.tickets },
-      { label: 'Sandbox', icon: FlaskConical, path: '/sandbox', roles: ROLE_ACCESS.sandbox },
+      { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', module: 'dashboard' },
+      { label: 'Tickets', icon: Ticket, path: '/tickets', module: 'tickets' },
+      { label: 'Sandbox', icon: FlaskConical, path: '/sandbox', module: 'sandbox' },
     ],
   },
   {
     label: 'Governance',
     items: [
-      { label: 'Taxonomy', icon: TreeDeciduous, path: '/taxonomy', roles: ROLE_ACCESS.taxonomy },
-      { label: 'Knowledge Base', icon: BookOpen, path: '/knowledge-base', roles: ROLE_ACCESS.knowledgeBase },
-      { label: 'Policy', icon: Shield, path: '/policy', roles: ROLE_ACCESS.policy },
+      { label: 'Taxonomy', icon: TreeDeciduous, path: '/taxonomy', module: 'taxonomy' },
+      { label: 'Knowledge Base', icon: BookOpen, path: '/knowledge-base', module: 'knowledgeBase' },
+      { label: 'Policy', icon: Shield, path: '/policy', module: 'policy' },
     ],
   },
   {
     label: 'Customer Intelligence',
     items: [
-      { label: 'Customers', icon: Users, path: '/customers', roles: ROLE_ACCESS.customers },
-      { label: 'Analytics', icon: BarChart3, path: '/analytics', roles: ROLE_ACCESS.analytics },
+      { label: 'Customers', icon: Users, path: '/customers', module: 'customers' },
+      { label: 'Analytics', icon: BarChart3, path: '/analytics', module: 'analytics' },
     ],
   },
   {
     label: 'Intelligence',
     items: [
-      { label: 'BI Agent', icon: BrainCircuit, path: '/bi-agent', roles: ROLE_ACCESS.biAgent },
+      { label: 'BI Agent', icon: BrainCircuit, path: '/bi-agent', module: 'biAgent' },
     ],
   },
   {
     label: 'System',
     items: [
-      { label: 'System Admin', icon: Settings, path: '/system', roles: ROLE_ACCESS.system },
+      { label: 'System Admin', icon: Settings, path: '/system', module: 'system' },
+      { label: 'Users', icon: UserCog, path: '/users', module: 'system', permission: 'admin' },
     ],
   },
 ]
 
+function isItemVisible(user: User | null, item: NavItem): boolean {
+  return hasPermission(user, item.module, item.permission ?? 'view')
+}
+
 export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar } = useUIStore()
-  const { token, role, logout } = useAuthStore()
+  const { user, logout } = useAuthStore()
   const navigate = useNavigate()
 
   const handleLogout = () => {
@@ -95,7 +100,7 @@ export function Sidebar() {
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-3 px-2">
         {NAV_GROUPS.map((group) => {
-          const visibleItems = group.items.filter((item) => canAccess(role, item.roles))
+          const visibleItems = group.items.filter((item) => isItemVisible(user, item))
           if (!visibleItems.length) return null
           return (
           <div key={group.label} className="mb-4">
@@ -136,11 +141,13 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="border-t border-surface-border p-2 space-y-1">
-        {!sidebarCollapsed && token && (
+        {!sidebarCollapsed && user && (
           <div className="px-2 py-1.5 bg-surface rounded-md mb-2">
-            <p className="text-xs text-subtle">Token</p>
-            <p className="text-xs font-mono text-muted">{maskToken(token)}</p>
-            {role && <p className="text-xs text-brand-500 capitalize">{role}</p>}
+            <p className="text-xs text-subtle truncate">{user.email}</p>
+            <p className="text-xs font-medium text-foreground truncate">{user.full_name || user.email}</p>
+            {user.is_super_admin && (
+              <p className="text-xs text-brand-500">Super Admin</p>
+            )}
           </div>
         )}
         <button

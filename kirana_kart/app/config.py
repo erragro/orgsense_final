@@ -154,10 +154,43 @@ class Settings(BaseSettings):
     )
 
     # ============================================================
-    # AUTHENTICATION
+    # AUTHENTICATION — legacy token (kept for backward compat)
     # ============================================================
 
     admin_token: str = Field(default="", alias="ADMIN_TOKEN")
+
+    # ============================================================
+    # AUTHENTICATION — JWT
+    # ============================================================
+
+    jwt_secret_key: str = Field(
+        default="change-me-in-production-use-a-long-random-string",
+        alias="JWT_SECRET_KEY",
+    )
+    jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
+    jwt_access_expire_minutes: int = Field(default=60, alias="JWT_ACCESS_EXPIRE_MINUTES")
+    jwt_refresh_expire_days: int = Field(default=30, alias="JWT_REFRESH_EXPIRE_DAYS")
+
+    # Bootstrap super-admin created on first startup (if no users exist)
+    bootstrap_admin_email: str = Field(default="admin@kirana.local", alias="BOOTSTRAP_ADMIN_EMAIL")
+    bootstrap_admin_password: str = Field(default="changeme123", alias="BOOTSTRAP_ADMIN_PASSWORD")
+    bootstrap_admin_name: str = Field(default="Super Admin", alias="BOOTSTRAP_ADMIN_NAME")
+
+    # OAuth: backend callback base URL and frontend URL
+    oauth_redirect_base_url: str = Field(default="http://localhost:8001", alias="OAUTH_REDIRECT_BASE_URL")
+    frontend_url: str = Field(default="http://localhost:5173", alias="FRONTEND_URL")
+
+    # GitHub OAuth
+    github_client_id: str = Field(default="", alias="GITHUB_CLIENT_ID")
+    github_client_secret: str = Field(default="", alias="GITHUB_CLIENT_SECRET")
+
+    # Google OAuth
+    google_client_id: str = Field(default="", alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str = Field(default="", alias="GOOGLE_CLIENT_SECRET")
+
+    # Microsoft OAuth
+    microsoft_client_id: str = Field(default="", alias="MICROSOFT_CLIENT_ID")
+    microsoft_client_secret: str = Field(default="", alias="MICROSOFT_CLIENT_SECRET")
 
     # ============================================================
     # WORKER
