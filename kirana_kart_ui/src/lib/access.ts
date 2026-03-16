@@ -12,6 +12,7 @@ export type AppModule =
   | 'biAgent'
   | 'sandbox'
   | 'cardinal'
+  | 'qaAgent'
 
 export type Permission = 'view' | 'edit' | 'admin'
 
