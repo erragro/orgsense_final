@@ -72,6 +72,13 @@ bcrypt>=3.2.0,<4.0.0              # pin to passlib-compatible version
 email-validator>=2.1.0,<3.0.0     # required for pydantic EmailStr
 
 # ----------------------------
+# Channel Integrations (Gmail / Outlook / IMAP)
+# ----------------------------
+google-auth>=2.20.0,<3.0.0
+google-api-python-client>=2.90.0,<3.0.0
+msal>=1.24.0,<2.0.0
+
+# ----------------------------
 # Testing
 # ----------------------------
 pytest>=8.2.0,<9.0.0

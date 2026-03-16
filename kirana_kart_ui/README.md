@@ -101,7 +101,7 @@ interface User {
 | `policy` | Compiled policy versions |
 | `customers` | Customer records |
 | `analytics` | Reports + charts |
-| `system` | System status + user management |
+| `system` | System health · vector jobs · audit logs · model registry · **channel integrations** |
 | `biAgent` | Natural language SQL |
 | `sandbox` | Testing tools |
 
@@ -146,6 +146,7 @@ kirana_kart_ui/
 │   │   │   ├── tickets.api.ts
 │   │   │   ├── customers.api.ts
 │   │   │   ├── analytics.api.ts
+│   │   │   ├── integrations.api.ts   # channel integrations CRUD + test + sync
 │   │   │   └── bi.api.ts
 │   │   └── ingest/
 │   │       └── ingest.api.ts
@@ -175,6 +176,8 @@ kirana_kart_ui/
 │   │   ├── analytics/
 │   │   ├── bi/
 │   │   ├── system/
+│   │   │   ├── SystemPage.tsx        # 5-tab admin: Health · Vector Jobs · Audit · Models · Integrations
+│   │   │   └── IntegrationsPanel.tsx # Channel integrations UI (see below)
 │   │   └── users/
 │   │       └── UserManagementPage.tsx # User table + per-module permission editor
 │   │
@@ -185,7 +188,8 @@ kirana_kart_ui/
 │   │   └── auth.store.ts             # Zustand store (persisted as 'kk_auth')
 │   │
 │   └── types/
-│       └── auth.types.ts             # Re-exports from auth.store
+│       ├── auth.types.ts             # Re-exports from auth.store
+│       └── integration.types.ts      # Integration, IntegrationType, SyncStatus
 │
 ├── index.html
 ├── vite.config.ts                    # Vite config (uses process.env.PORT)
@@ -247,6 +251,28 @@ export function canView(user: User | null, module: AppModule): boolean
 /users          → protect(UserManagementPage, 'system', 'admin')
 // etc.
 ```
+
+### `src/pages/system/IntegrationsPanel.tsx`
+
+Channel Integrations management page (inside the System Admin → Integrations tab). Requires `system.view` to see, `system.admin` to create / edit / delete.
+
+Features:
+- **Type overview cards** — Gmail · Outlook · SMTP/IMAP · API Key, each showing active/total count. Click to open the "Add Integration" modal pre-set to that type.
+- **Integration table** — name, type badge, org/module, active toggle, sync status pill (idle / running / ok / error with tooltip for error message), last synced timestamp, action buttons.
+- **Add/Edit modal** — type-specific form fields (see below). All sensitive fields (tokens, passwords) use `type="password"` inputs.
+- **Test Connection** — calls `POST /integrations/{id}/test` and shows inline success/error result.
+- **Sync Now** — calls `POST /integrations/{id}/sync`, triggers background poll, auto-refreshes table after 2 seconds.
+- **API key reveal-once flow** — on create of `api` type, the response contains the generated key; the modal switches to a "Copy now — it won't be shown again" screen before closing.
+- **Delete confirmation** — warns about API key revocation for `api` type integrations.
+
+**Type-specific config fields:**
+
+| Type | Fields |
+|------|--------|
+| Gmail | Email address, Client ID, Client Secret, Access Token, Refresh Token, Folder/Label, Poll interval, Mark as read toggle |
+| Outlook | Email address, Tenant ID, Client ID, Client Secret, Folder, Poll interval, Mark as read toggle |
+| SMTP/IMAP | Email address, IMAP host, IMAP port, Username, Password, Folder, Poll interval, Use SSL toggle, Mark as read toggle |
+| API | Description (key auto-generated on save; ingest URL shown for copy) |
 
 ### `src/pages/users/UserManagementPage.tsx`
 

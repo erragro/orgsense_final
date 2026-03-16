@@ -15,6 +15,7 @@ The governance control plane is a **FastAPI backend** that manages the full life
 - **Knowledge base** — Raw policy document upload, LLM compilation into structured rules, vectorization
 - **Ticket processing** — 5-phase ingest pipeline, 4-stage LLM resolution, Celery workers
 - **BI Agent** — Natural language SQL queries over the read-only `bi_readonly` role
+- **Channel Integrations** — Gmail, Outlook, SMTP/IMAP mailbox polling + API key management; emails auto-submitted as tickets into the Cardinal pipeline
 - **Observability** — Prometheus metrics, structured JSON logging, correlation IDs
 
 ---
@@ -35,6 +36,7 @@ The governance control plane is a **FastAPI backend** that manages the full life
 │  /users │        │  /tickets    │               │  /vectorization │
 │  /bi    │        │  /customers  │               │  /simulation    │
 │  /system│        │  /analytics  │               │  /shadow        │
+│  /integr│        │              │               │                 │
 └─────────┘        └──────────────┘               └─────────────────┘
      │                                                     │
      ▼                                                     ▼
@@ -164,6 +166,45 @@ kirana_kart.refresh_tokens
   id SERIAL PK, user_id → users(id),
   token_hash VARCHAR UNIQUE, expires_at TIMESTAMPTZ
 ```
+
+### BI Chat Tables (auto-created on startup)
+
+```sql
+kirana_kart.bi_chat_sessions
+  id SERIAL PK, label VARCHAR, user_id INTEGER, created_at, updated_at
+
+kirana_kart.bi_chat_messages
+  id SERIAL PK, session_id → bi_chat_sessions(id) CASCADE,
+  role VARCHAR, content TEXT, sql_query TEXT, created_at
+```
+
+### Integration Table (auto-created on startup)
+
+```sql
+kirana_kart.integrations
+  id              SERIAL PK
+  name            VARCHAR(200)
+  type            VARCHAR(20) CHECK (type IN ('gmail','outlook','smtp','api'))
+  org             VARCHAR(100)  DEFAULT 'default'
+  business_line   VARCHAR(50)   DEFAULT 'ecommerce'
+  module          VARCHAR(50)   DEFAULT 'delivery'
+  is_active       BOOLEAN       DEFAULT FALSE
+  config          JSONB         -- type-specific credentials (redacted on API responses)
+  last_synced_at  TIMESTAMPTZ
+  sync_status     VARCHAR(20)   CHECK ('idle','running','ok','error')
+  sync_error      TEXT
+  created_by      INTEGER → users(id)
+  created_at / updated_at TIMESTAMPTZ
+```
+
+**Config JSONB shape per type:**
+
+| Type | Config Fields |
+|------|--------------|
+| `gmail` | `email_address`, `client_id`, `client_secret`, `access_token`, `refresh_token`, `poll_interval_minutes`, `label_filter`, `mark_as_read` |
+| `outlook` | `email_address`, `tenant_id`, `client_id`, `client_secret`, `poll_interval_minutes`, `folder`, `mark_as_read` |
+| `smtp` | `email_address`, `imap_host`, `imap_port`, `username`, `password`, `use_ssl`, `poll_interval_minutes`, `folder`, `mark_as_read` |
+| `api` | `api_key` (`kk_live_` + 64 hex), `description`, `ingest_url` |
 
 ### Business Tables
 
@@ -322,6 +363,29 @@ Requires `knowledgeBase.*` permissions.
 | GET | `/vectorization/status/{label}` | knowledgeBase.view | Vector job status |
 | POST | `/simulation/run` | policy.admin | Compare two policy versions |
 
+### Channel Integrations (`/integrations`)
+
+All reads require `system.view`. All mutations require `system.admin`.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/integrations` | List all integrations (sensitive config fields redacted to `***`) |
+| POST | `/integrations` | Create integration — for `api` type, generates and returns the key **once** |
+| GET | `/integrations/{id}` | Get single integration (config redacted) |
+| GET | `/integrations/{id}/config` | Full unredacted config (`system.admin` only) |
+| PATCH | `/integrations/{id}` | Update name / org / module / config (config is merged, not replaced) |
+| DELETE | `/integrations/{id}` | Delete integration; for `api` type also removes key from `admin_users` |
+| POST | `/integrations/{id}/toggle` | Flip `is_active` |
+| POST | `/integrations/{id}/test` | Test connectivity — returns `{success, message}` |
+| POST | `/integrations/{id}/sync` | Trigger one manual poll cycle in background (email types only) |
+| POST | `/integrations/generate-key` | Generate a standalone `kk_live_` key (caller stores it) |
+
+**API key lifecycle:**
+- Key format: `kk_live_` + `secrets.token_hex(32)` = 64-char hex string
+- On create: key is inserted into `kirana_kart.admin_users` so Phase 3 `_verify_api_token()` accepts it with zero pipeline changes
+- On delete: key is removed from `admin_users` — access revoked immediately
+- Key is only shown in the HTTP response at creation time; subsequent GET requests redact it
+
 ---
 
 ## Policy Document Lifecycle
@@ -357,6 +421,19 @@ Requires `knowledgeBase.*` permissions.
 Polls for pending `kb_vector_jobs` every 10 seconds. Uses `FOR UPDATE SKIP LOCKED` for safe concurrent replicas. Embeds rule text via `text-embedding-3-large` (3072 dims) and upserts into Weaviate's `KBRule` class.
 
 Monitor: `GET /health/worker` → `{ alive, last_heartbeat_s, jobs_processed }`
+
+### Integration Poller (daemon thread)
+Runs as a named daemon thread (`kirana-integration-poller`). Sweeps every 60 seconds for active email integrations (Gmail / Outlook / SMTP) whose `last_synced_at` is older than their configured `poll_interval_minutes`. For each due integration:
+
+1. Authenticates with the mailbox (Google API / Microsoft Graph / IMAP)
+2. Fetches unread / unseen messages
+3. Maps each email to a `CardinalIngestRequest` and POSTs to `http://ingest:8000/cardinal/ingest`
+4. Marks messages as read (if `mark_as_read` is set)
+5. Updates `sync_status` (`ok` or `error`) and `last_synced_at`
+
+**API integrations** (`type = 'api'`) have no poller — they generate a `kk_live_` key that external systems use directly as a Bearer token on the ingest endpoint.
+
+**Gmail token refresh:** If the access token is expired, the poller refreshes it via Google's token endpoint and persists the new tokens back to `integrations.config` automatically.
 
 ### Celery Workers
 Two separate services:
@@ -395,11 +472,13 @@ kirana_kart/
 │   │   │   ├── tickets.py        # /tickets/* endpoints
 │   │   │   ├── customers.py      # /customers/* endpoints
 │   │   │   ├── analytics.py      # /analytics/* endpoints
-│   │   │   ├── bi_agent.py       # /bi/* endpoints
+│   │   │   ├── bi_agent.py       # /bi-agent/* endpoints + BI chat tables
+│   │   │   ├── integrations.py   # /integrations/* endpoints (CRUD + test + toggle + sync)
 │   │   │   └── system.py         # /system/* endpoints
 │   │   └── services/
-│   │       ├── auth_service.py   # JWT, bcrypt, UserContext, require_permission()
-│   │       ├── oauth_service.py  # GitHub / Google / Microsoft OAuth flows
+│   │       ├── auth_service.py       # JWT, bcrypt, UserContext, require_permission()
+│   │       ├── oauth_service.py      # GitHub / Google / Microsoft OAuth flows
+│   │       ├── integration_service.py # DB setup, Gmail/Outlook/IMAP polling, poller daemon
 │   │       ├── taxonomy_service.py
 │   │       └── vector_service.py
 │   │
@@ -519,3 +598,7 @@ Another service is using port 8001. Update `docker-compose.yml` ports mapping: `
 - **Prune `policy_shadow_results`** — accumulates indefinitely; archive or truncate periodically.
 - **Celery concurrency** — `worker-celery` defaults to 2 workers. Scale with `--concurrency=N` or run multiple replicas.
 - **Weaviate** — `KBRule` class uses delete-then-insert per `policy_version` — safe for re-vectorization. Back up `weaviate_data` volume in production.
+- **Integration credentials** — `access_token`, `refresh_token`, `password`, `client_secret`, and `api_key` are stored as plain text in the `integrations.config` JSONB column. Use PostgreSQL column encryption or a secrets manager (AWS Secrets Manager, Vault) for production deployments.
+- **Gmail token refresh** — the integration poller auto-refreshes expired Google access tokens and persists the new token to the DB. Ensure the OAuth app is not in "Testing" mode so tokens don't expire after 7 days.
+- **Outlook permissions** — the app registration requires `Mail.Read` (for reading) and optionally `Mail.ReadWrite` (for marking as read). Admin consent must be granted in the Azure portal.
+- **API key revocation** — deleting an integration via the UI or `DELETE /integrations/{id}` immediately removes the key from `admin_users`. In production (non-sandbox) mode, Phase 3 will reject the key on the next ingest request.

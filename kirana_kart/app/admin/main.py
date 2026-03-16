@@ -26,6 +26,7 @@ from app.metrics import (
 )
 from app.admin.services.auth_service import ensure_auth_tables, ensure_bootstrap_admin
 from app.admin.routes.bi_agent import ensure_bi_tables
+from app.admin.services.integration_service import ensure_integration_tables, run_integration_poller
 
 import logging
 
@@ -109,6 +110,12 @@ async def lifespan(app: FastAPI):
     ensure_auth_tables()
     ensure_bootstrap_admin()
     ensure_bi_tables()
+    ensure_integration_tables()
+    threading.Thread(
+        target=run_integration_poller,
+        daemon=True,
+        name="kirana-integration-poller",
+    ).start()
     start_background_worker()
     logger.info(
         "Governance control plane starting | version=%s", settings.service_version
@@ -165,6 +172,7 @@ from app.l45_ml_platform.vectorization.routes import router as vector_router
 from app.l45_ml_platform.simulation.routes import router as simulation_router
 from app.l5_intelligence.policy_shadow.routes import router as shadow_router
 from app.admin.routes.bi_agent import router as bi_agent_router
+from app.admin.routes.integrations import router as integrations_router
 
 app.include_router(auth_router)
 app.include_router(session_router)
@@ -180,6 +188,7 @@ app.include_router(vector_router)
 app.include_router(simulation_router)
 app.include_router(shadow_router)
 app.include_router(bi_agent_router)
+app.include_router(integrations_router)
 
 
 # ============================================================
