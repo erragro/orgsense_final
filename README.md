@@ -163,7 +163,9 @@ Every user has three independent permission flags per module:
 | `edit` | Create and update operations |
 | `admin` | Publish, rollback, vectorize, delete |
 
-**Modules:** `dashboard` · `tickets` · `taxonomy` · `knowledgeBase` · `policy` · `customers` · `analytics` · `system` · `biAgent` · `sandbox`
+**Modules:** `dashboard` · `tickets` · `taxonomy` · `knowledgeBase` · `policy` · `customers` · `analytics` · `system` · `biAgent` · `sandbox` · `cardinal`
+
+> **Note:** The `cardinal` module is **default-deny** — new signups receive `can_view = false`. A super-admin must explicitly grant access via the `/users` page.
 
 `is_super_admin` bypasses all permission checks entirely.
 
@@ -288,6 +290,7 @@ React 19 + TypeScript + Vite. In production, build with `npm run build` and serv
 | Customers | `/customers` | Profiles, order history, churn risk |
 | Analytics | `/analytics` | Evaluation Matrix — 16K+ tickets with LLM output analysis |
 | BI Agent | `/bi-agent` | Natural language → SQL → streamed analyst-style response |
+| **Cardinal** | `/cardinal` | **Pipeline observability** — 5-phase ingest stats, LLM stage breakdown, per-ticket execution traces, audit log, reprocess tool. *Admin-only access — default-deny for new users.* |
 | System | `/system` | Service health, vector jobs, audit logs, model registry, **channel integrations** |
 | Users | `/users` | User table + per-module permission editor (system.admin only) |
 
@@ -464,6 +467,19 @@ All tables are in the `kirana_kart` PostgreSQL schema.
 | POST | `/integrations/{id}/test` | `system.admin` | Test connectivity |
 | POST | `/integrations/{id}/sync` | `system.admin` | Trigger manual poll cycle |
 | POST | `/integrations/generate-key` | `system.admin` | Generate `kk_live_` API key |
+
+### Cardinal Intelligence (`/cardinal`) — requires `cardinal.view` (GET) or `cardinal.admin` (POST)
+
+> Access is **default-deny**: new accounts receive `can_view = false`. A super-admin must grant it.
+
+| Method | Endpoint | Permission | Description |
+|---|---|---|---|
+| GET | `/cardinal/overview` | `cardinal.view` | Pipeline summary stats, volume trend, source/channel distribution |
+| GET | `/cardinal/phase-stats` | `cardinal.view` | Per-LLM-stage pass/fail/latency breakdown |
+| GET | `/cardinal/executions` | `cardinal.view` | Paginated ticket execution list with filters |
+| GET | `/cardinal/executions/{ticket_id}` | `cardinal.view` | Full trace for one ticket (all LLM stages + metrics + audit events) |
+| GET | `/cardinal/audit` | `cardinal.view` | Paginated execution audit log |
+| POST | `/cardinal/reprocess/{ticket_id}` | `cardinal.admin` | Re-submit a ticket through the full Cardinal pipeline |
 
 Full interactive docs: **http://localhost:8001/docs**
 
@@ -667,7 +683,8 @@ kirana_kart_final/
 │   │   │   │   ├── analytics.py
 │   │   │   │   ├── system.py
 │   │   │   │   ├── bi_agent.py
-│   │   │   │   └── integrations.py     # /integrations/* — channel integrations
+│   │   │   │   ├── integrations.py     # /integrations/* — channel integrations
+│   │   │   │   └── cardinal.py         # /cardinal/* — pipeline observability + reprocess
 │   │   │   └── services/
 │   │   │       ├── auth_service.py     # JWT, bcrypt, RBAC dependencies
 │   │   │       ├── oauth_service.py    # GitHub / Google / Microsoft
@@ -689,9 +706,11 @@ kirana_kart_final/
     │   │   └── governance/
     │   │       ├── auth.api.ts
     │   │       ├── users.api.ts
-    │   │       └── integrations.api.ts # Channel integrations API client
+    │   │       ├── integrations.api.ts # Channel integrations API client
+    │   │       └── cardinal.api.ts     # Cardinal pipeline observability API client
     │   ├── types/
-    │   │   └── integration.types.ts    # Integration, IntegrationType, SyncStatus
+    │   │   ├── integration.types.ts    # Integration, IntegrationType, SyncStatus
+    │   │   └── cardinal.types.ts       # CardinalOverview, PhaseStats, ExecutionDetail, etc.
     │   ├── lib/
     │   │   └── access.ts               # hasPermission(user, module, perm)
     │   ├── pages/
@@ -702,6 +721,13 @@ kirana_kart_final/
     │   │   ├── system/
     │   │   │   ├── SystemPage.tsx      # 5-tab system admin
     │   │   │   └── IntegrationsPanel.tsx  # Channel integrations UI
+    │   │   ├── cardinal/
+    │   │   │   ├── CardinalPage.tsx    # 4-tab Cardinal Intelligence page
+    │   │   │   └── tabs/
+    │   │   │       ├── OverviewTab.tsx     # Pipeline stats + volume trend + distribution charts
+    │   │   │       ├── PhaseAnalysisTab.tsx # Per-LLM-stage pass/fail cards + error rate chart
+    │   │   │       ├── ExecutionTab.tsx    # Paginated execution table + slide-over trace drawer
+    │   │   │       └── OperationsTab.tsx   # Audit log + reprocess ticket tool
     │   │   └── users/
     │   │       └── UserManagementPage.tsx
     │   ├── components/layout/
@@ -756,3 +782,4 @@ OpenAI rate-limit issue. Reduce `PROCESS_BATCH_SIZE` in your `.env`.
 - [ ] For Outlook integrations: register an Azure AD app with `Mail.Read` delegated permissions and grant admin consent
 - [ ] Rotate any generated `kk_live_` API keys if they are ever exposed; deletion via the Integrations UI immediately revokes ingest access
 - [ ] Consider encrypting sensitive JSONB config fields (`access_token`, `refresh_token`, `password`) at the DB level for production deployments
+- [ ] Grant `cardinal.view` (and optionally `cardinal.admin` for reprocess) only to trusted operations team members — the module is default-deny for all new accounts by design

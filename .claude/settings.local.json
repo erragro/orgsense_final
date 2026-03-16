@@ -208,7 +208,30 @@
       "Bash(__NEW_LINE_5862c05f8a8d5c83__ echo \"\")",
       "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"SELECT id, api_token, role FROM kirana_kart.admin_users ORDER BY id DESC LIMIT 10;\")",
       "Bash(curl -s -w \"\\\\nHTTP_STATUS:%{http_code}\" -X POST http://localhost:8000/cardinal/ingest -H \"Authorization: Bearer $API_KEY\" -H \"Content-Type: application/json\" -d '{\"\"channel\"\":\"\"api\"\",\"\"source\"\":\"\"api\"\",\"\"org\"\":\"\"testorg\"\",\"\"business_line\"\":\"\"ecommerce\"\",\"\"module\"\":\"\"delivery\"\",\"\"payload\"\":{\"\"cx_email\"\":\"\"test@test.com\"\",\"\"subject\"\":\"\"Test Delete Verification\"\",\"\"description\"\":\"\"This is a test to verify the key was deleted properly\"\"}}')",
-      "Bash(docker compose up -d ui)"
+      "Bash(docker compose up -d ui)",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"\\\\dt kirana_kart.*\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"\\\\d kirana_kart.execution_audit_log\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"\\\\d kirana_kart.execution_metrics\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"\\\\d kirana_kart.fdraw\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"\\\\d kirana_kart.llm_output_1\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"\\\\d kirana_kart.ticket_execution_summary\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"SELECT DISTINCT status FROM kirana_kart.llm_output_1 LIMIT 10;\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"SELECT DISTINCT pipeline_status FROM kirana_kart.llm_output_1 LIMIT 10;\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"SELECT DISTINCT is_complete FROM kirana_kart.llm_output_1 LIMIT 5;\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"SELECT DISTINCT event_type FROM kirana_kart.execution_audit_log LIMIT 20;\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"SELECT DISTINCT stage_name FROM kirana_kart.execution_audit_log LIMIT 20;\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"SELECT COUNT\\(*\\) FROM kirana_kart.execution_audit_log;\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"SELECT COUNT\\(*\\) FROM kirana_kart.llm_output_1;\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"SELECT COUNT\\(*\\) FROM kirana_kart.llm_output_2;\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"SELECT COUNT\\(*\\) FROM kirana_kart.llm_output_3;\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"SELECT column_name, data_type FROM information_schema.columns WHERE table_schema=''kirana_kart'' AND table_name=''llm_output_2'' AND column_name IN \\(''status'', ''pipeline_status'', ''is_complete'', ''created_at'', ''updated_at''\\);\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"SELECT column_name, data_type FROM information_schema.columns WHERE table_schema=''kirana_kart'' AND table_name=''llm_output_3'' AND column_name IN \\(''status'', ''pipeline_status'', ''is_complete'', ''created_at'', ''updated_at''\\);\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"SELECT f.ticket_id FROM kirana_kart.fdraw f JOIN kirana_kart.execution_metrics em ON em.ticket_id = f.ticket_id LIMIT 3;\")",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(echo \"Exit code: $?\")",
+      "Bash(echo \"TS exit: $?\")",
+      "Bash(echo \"TSC EXIT: $?\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -q -c \"SELECT ticket_id FROM kirana_kart.fdraw WHERE ticket_id = 9999;\")"
     ]
   }
 }

@@ -46,6 +46,7 @@ const SystemPage = lazy(() => import('@/pages/system/SystemPage'))
 const BIAgentPage = lazy(() => import('@/pages/agents/BIAgentPage'))
 const SandboxPage = lazy(() => import('@/pages/sandbox/SandboxPage'))
 const UserManagementPage = lazy(() => import('@/pages/users/UserManagementPage'))
+const CardinalPage = lazy(() => import('@/pages/cardinal/CardinalPage'))
 
 export const router = createBrowserRouter([
   {
@@ -86,6 +87,8 @@ export const router = createBrowserRouter([
       { path: 'system/*', element: protect(SystemPage, 'system') },
       { path: 'bi-agent', element: protect(BIAgentPage, 'biAgent') },
       { path: 'sandbox', element: protect(SandboxPage, 'sandbox') },
+      { path: 'cardinal', element: protect(CardinalPage, 'cardinal') },
+      { path: 'cardinal/*', element: protect(CardinalPage, 'cardinal') },
       { path: 'users', element: protect(UserManagementPage, 'system', 'admin') },
     ],
   },

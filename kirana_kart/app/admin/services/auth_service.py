@@ -53,7 +53,11 @@ ALL_MODULES: list[str] = [
     "system",
     "biAgent",
     "sandbox",
+    "cardinal",
 ]
+
+# Modules where new-user default view = False (admin must grant explicitly)
+ADMIN_ONLY_MODULES: set[str] = {"cardinal"}
 
 # ---------------------------------------------------------------------------
 # User context dataclass returned by get_current_user
@@ -313,16 +317,19 @@ def ensure_auth_tables() -> None:
 
 
 def assign_viewer_permissions(user_id: int, session) -> None:
-    """Give a new user can_view=True on all modules."""
+    """Give a new user can_view=True on all non-restricted modules.
+    Modules in ADMIN_ONLY_MODULES start with can_view=False (must be granted by super-admin).
+    """
     for module in ALL_MODULES:
+        can_view = module not in ADMIN_ONLY_MODULES
         session.execute(
             text("""
                 INSERT INTO kirana_kart.user_permissions
                     (user_id, module, can_view, can_edit, can_admin)
-                VALUES (:uid, :mod, TRUE, FALSE, FALSE)
+                VALUES (:uid, :mod, :can_view, FALSE, FALSE)
                 ON CONFLICT (user_id, module) DO NOTHING
             """),
-            {"uid": user_id, "mod": module},
+            {"uid": user_id, "mod": module, "can_view": can_view},
         )
 
 

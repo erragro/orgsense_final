@@ -11,6 +11,7 @@ export type AppModule =
   | 'system'
   | 'biAgent'
   | 'sandbox'
+  | 'cardinal'
 
 export type Permission = 'view' | 'edit' | 'admin'
 
