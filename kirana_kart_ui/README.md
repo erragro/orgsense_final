@@ -92,18 +92,19 @@ interface User {
 
 ### Modules
 
-| Module Key | Dashboard Section |
-|---|---|
-| `dashboard` | Overview / home |
-| `tickets` | Ticket queue + resolution |
-| `taxonomy` | Issue code hierarchy |
-| `knowledgeBase` | KB document management |
-| `policy` | Compiled policy versions |
-| `customers` | Customer records |
-| `analytics` | Reports + charts |
-| `system` | System health · vector jobs · audit logs · model registry · **channel integrations** |
-| `biAgent` | Natural language SQL |
-| `sandbox` | Testing tools |
+| Module Key | Dashboard Section | Default access for new users |
+|---|---|---|
+| `dashboard` | Overview / home | ✅ view granted |
+| `tickets` | Ticket queue + resolution | ✅ view granted |
+| `taxonomy` | Issue code hierarchy | ✅ view granted |
+| `knowledgeBase` | KB document management | ✅ view granted |
+| `policy` | Compiled policy versions | ✅ view granted |
+| `customers` | Customer records | ✅ view granted |
+| `analytics` | Reports + charts | ✅ view granted |
+| `system` | System health · vector jobs · audit logs · model registry · **channel integrations** | ✅ view granted |
+| `biAgent` | Natural language SQL | ✅ view granted |
+| `sandbox` | Testing tools | ✅ view granted |
+| `cardinal` | **Pipeline observability** — 5-phase stats, LLM execution traces, audit log, reprocess tool | ❌ **denied** — super-admin must grant |
 
 ### Checking Permissions in Components
 
@@ -147,6 +148,7 @@ kirana_kart_ui/
 │   │   │   ├── customers.api.ts
 │   │   │   ├── analytics.api.ts
 │   │   │   ├── integrations.api.ts   # channel integrations CRUD + test + sync
+│   │   │   ├── cardinal.api.ts       # cardinal pipeline observability + reprocess
 │   │   │   └── bi.api.ts
 │   │   └── ingest/
 │   │       └── ingest.api.ts
@@ -178,6 +180,13 @@ kirana_kart_ui/
 │   │   ├── system/
 │   │   │   ├── SystemPage.tsx        # 5-tab admin: Health · Vector Jobs · Audit · Models · Integrations
 │   │   │   └── IntegrationsPanel.tsx # Channel integrations UI (see below)
+│   │   ├── cardinal/
+│   │   │   ├── CardinalPage.tsx      # 4-tab page (Pipeline Overview · Phase Analysis · LLM Execution · Operations)
+│   │   │   └── tabs/
+│   │   │       ├── OverviewTab.tsx       # StatCards + TrendLineChart + PieDonutCharts (30s auto-refresh)
+│   │   │       ├── PhaseAnalysisTab.tsx  # Per-LLM-stage cards + BarMetricChart error rate comparison
+│   │   │       ├── ExecutionTab.tsx      # Paginated table + slide-over trace drawer (all 4 LLM stages)
+│   │   │       └── OperationsTab.tsx     # Audit log (30s refresh) + reprocess ticket tool (admin-only)
 │   │   └── users/
 │   │       └── UserManagementPage.tsx # User table + per-module permission editor
 │   │
@@ -189,7 +198,8 @@ kirana_kart_ui/
 │   │
 │   └── types/
 │       ├── auth.types.ts             # Re-exports from auth.store
-│       └── integration.types.ts      # Integration, IntegrationType, SyncStatus
+│       ├── integration.types.ts      # Integration, IntegrationType, SyncStatus
+│       └── cardinal.types.ts         # CardinalOverview, PhaseStats, ExecutionSummary, ExecutionDetail, etc.
 │
 ├── index.html
 ├── vite.config.ts                    # Vite config (uses process.env.PORT)
@@ -228,7 +238,7 @@ Axios request interceptor injects `Authorization: Bearer <token>`. Response inte
 
 ```typescript
 export type AppModule = 'dashboard' | 'tickets' | 'taxonomy' | 'knowledgeBase' |
-  'policy' | 'customers' | 'analytics' | 'system' | 'biAgent' | 'sandbox'
+  'policy' | 'customers' | 'analytics' | 'system' | 'biAgent' | 'sandbox' | 'cardinal'
 export type Permission = 'view' | 'edit' | 'admin'
 
 export function hasPermission(user: User | null, module: AppModule, perm: Permission): boolean
@@ -248,6 +258,8 @@ export function canView(user: User | null, module: AppModule): boolean
 /tickets        → protect(TicketsPage, 'tickets', 'view')
 /taxonomy       → protect(TaxonomyPage, 'taxonomy', 'view')
 /kb             → protect(KBPage, 'knowledgeBase', 'view')
+/cardinal       → protect(CardinalPage, 'cardinal')          // default-deny
+/cardinal/*     → protect(CardinalPage, 'cardinal')
 /users          → protect(UserManagementPage, 'system', 'admin')
 // etc.
 ```
@@ -273,6 +285,17 @@ Features:
 | Outlook | Email address, Tenant ID, Client ID, Client Secret, Folder, Poll interval, Mark as read toggle |
 | SMTP/IMAP | Email address, IMAP host, IMAP port, Username, Password, Folder, Poll interval, Use SSL toggle, Mark as read toggle |
 | API | Description (key auto-generated on save; ingest URL shown for copy) |
+
+### `src/pages/cardinal/CardinalPage.tsx` + `tabs/`
+
+Cardinal Intelligence page (requires `cardinal.view` — default-deny for new users). Four tabs:
+
+| Tab | Component | Description |
+|---|---|---|
+| Pipeline Overview | `OverviewTab.tsx` | 6 StatCards (today/7d counts, auto-resolution %, dedup %, avg latency, phase failures), 14-day volume trend line chart, ticket source + channel pie charts. Auto-refreshes every 30s. |
+| Phase Analysis | `PhaseAnalysisTab.tsx` | One card per LLM stage (Classification → Evaluation → Validation → Dispatch) showing processed/passed/failed counts, success rate badge, avg latency, and top error messages (expandable). BarMetricChart compares error rates across all stages. |
+| LLM Execution | `ExecutionTab.tsx` | Searchable, filterable paginated table of all ticket executions. Clicking a row opens a slide-over **trace drawer** showing the full 4-stage LLM chain outputs (llm_output_1/2/3 + summary), processing metrics, and audit events. |
+| Operations | `OperationsTab.tsx` | Recent audit log table (auto-refreshes 30s). Reprocess Ticket input (admin-only, requires `cardinal.admin`) — 2-step confirmation before calling `POST /cardinal/reprocess/{ticket_id}`. |
 
 ### `src/pages/users/UserManagementPage.tsx`
 
@@ -311,8 +334,13 @@ npm run lint
 2. Add a nav item in `src/components/layout/Sidebar.tsx` with `module: 'yourModule'`
 3. Create the page component in `src/pages/yourModule/`
 4. Add a protected route in `src/router/index.tsx`
-5. Update the backend `ALL_MODULES` list in `app/admin/services/auth_service.py`
+5. Update `ALL_MODULES` in `app/admin/services/auth_service.py`
 6. New users will automatically receive `can_view = true` for the new module
+
+**To make a module default-deny** (like `cardinal`):
+
+7. Add the module key to `ADMIN_ONLY_MODULES` in `auth_service.py` — `assign_viewer_permissions()` will set `can_view = false` for it automatically
+8. Super-admins still bypass all checks; regular users must be explicitly granted access via the Users page
 
 ---
 

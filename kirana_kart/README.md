@@ -16,6 +16,7 @@ The governance control plane is a **FastAPI backend** that manages the full life
 - **Ticket processing** — 5-phase ingest pipeline, 4-stage LLM resolution, Celery workers
 - **BI Agent** — Natural language SQL queries over the read-only `bi_readonly` role
 - **Channel Integrations** — Gmail, Outlook, SMTP/IMAP mailbox polling + API key management; emails auto-submitted as tickets into the Cardinal pipeline
+- **Cardinal Intelligence** — Read-only observability over the full Cardinal pipeline (phase stats, per-ticket LLM traces, audit log) + admin reprocess tool; access is default-deny for new users
 - **Observability** — Prometheus metrics, structured JSON logging, correlation IDs
 
 ---
@@ -121,22 +122,23 @@ End users only see the provider's familiar consent screen — no credentials sto
 
 Each user has per-module `{can_view, can_edit, can_admin}` booleans:
 
-| Module | Routes |
-|---|---|
-| `dashboard` | Overview stats |
-| `tickets` | Ticket list + resolution |
-| `taxonomy` | Issue code hierarchy |
-| `knowledgeBase` | KB upload + publish |
-| `policy` | Compiled rule versions |
-| `customers` | Customer records |
-| `analytics` | Reports + BI agent |
-| `system` | Server status + user management |
-| `biAgent` | Natural language SQL |
-| `sandbox` | Testing sandbox |
+| Module | Routes | Default `can_view` for new users |
+|---|---|---|
+| `dashboard` | Overview stats | ✅ granted |
+| `tickets` | Ticket list + resolution | ✅ granted |
+| `taxonomy` | Issue code hierarchy | ✅ granted |
+| `knowledgeBase` | KB upload + publish | ✅ granted |
+| `policy` | Compiled rule versions | ✅ granted |
+| `customers` | Customer records | ✅ granted |
+| `analytics` | Reports + BI agent | ✅ granted |
+| `system` | Server status + user management | ✅ granted |
+| `biAgent` | Natural language SQL | ✅ granted |
+| `sandbox` | Testing sandbox | ✅ granted |
+| `cardinal` | Pipeline observability + reprocess | ❌ **denied** (admin must grant) |
 
 `is_super_admin = true` bypasses all permission checks.
 
-New users via signup or OAuth get `can_view = true` on all modules automatically.
+New users via signup or OAuth get `can_view = true` on all modules **except** `cardinal`, which is in `ADMIN_ONLY_MODULES` and requires explicit super-admin grant.
 
 ---
 
@@ -363,6 +365,20 @@ Requires `knowledgeBase.*` permissions.
 | GET | `/vectorization/status/{label}` | knowledgeBase.view | Vector job status |
 | POST | `/simulation/run` | policy.admin | Compare two policy versions |
 
+### Cardinal Intelligence (`/cardinal`)
+
+All GETs require `cardinal.view`. Reprocess requires `cardinal.admin`.
+Access is **default-deny** — new users receive `can_view = false` and must be granted access by a super-admin.
+
+| Method | Endpoint | Permission | Description |
+|---|---|---|---|
+| GET | `/cardinal/overview` | view | Pipeline summary: totals, auto-resolution %, avg processing time, volume trend |
+| GET | `/cardinal/phase-stats` | view | Per-LLM-stage pass/fail/error-rate breakdown (Classification → Evaluation → Validation → Dispatch) |
+| GET | `/cardinal/executions` | view | Paginated execution list with filters (source, status, module, date range, search) |
+| GET | `/cardinal/executions/{ticket_id}` | view | Full execution trace — raw ticket + all LLM outputs + metrics + audit events |
+| GET | `/cardinal/audit` | view | Paginated execution audit log |
+| POST | `/cardinal/reprocess/{ticket_id}` | admin | Re-submit ticket to `http://ingest:8000/cardinal/ingest` |
+
 ### Channel Integrations (`/integrations`)
 
 All reads require `system.view`. All mutations require `system.admin`.
@@ -474,6 +490,7 @@ kirana_kart/
 │   │   │   ├── analytics.py      # /analytics/* endpoints
 │   │   │   ├── bi_agent.py       # /bi-agent/* endpoints + BI chat tables
 │   │   │   ├── integrations.py   # /integrations/* endpoints (CRUD + test + toggle + sync)
+│   │   │   ├── cardinal.py       # /cardinal/* endpoints (overview, phase-stats, executions, audit, reprocess)
 │   │   │   └── system.py         # /system/* endpoints
 │   │   └── services/
 │   │       ├── auth_service.py       # JWT, bcrypt, UserContext, require_permission()

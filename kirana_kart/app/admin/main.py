@@ -173,6 +173,7 @@ from app.l45_ml_platform.simulation.routes import router as simulation_router
 from app.l5_intelligence.policy_shadow.routes import router as shadow_router
 from app.admin.routes.bi_agent import router as bi_agent_router
 from app.admin.routes.integrations import router as integrations_router
+from app.admin.routes.cardinal import router as cardinal_router
 
 app.include_router(auth_router)
 app.include_router(session_router)
@@ -189,6 +190,7 @@ app.include_router(simulation_router)
 app.include_router(shadow_router)
 app.include_router(bi_agent_router)
 app.include_router(integrations_router)
+app.include_router(cardinal_router)
 
 
 # ============================================================
