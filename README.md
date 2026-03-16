@@ -288,7 +288,7 @@ React 19 + TypeScript + Vite. In production, build with `npm run build` and serv
 | Customers | `/customers` | Profiles, order history, churn risk |
 | Analytics | `/analytics` | Evaluation Matrix — 16K+ tickets with LLM output analysis |
 | BI Agent | `/bi-agent` | Natural language → SQL → streamed analyst-style response |
-| System | `/system` | Service health, DB / Redis / Weaviate status |
+| System | `/system` | Service health, vector jobs, audit logs, model registry, **channel integrations** |
 | Users | `/users` | User table + per-module permission editor (system.admin only) |
 
 ---
@@ -398,6 +398,19 @@ All tables are in the `kirana_kart` PostgreSQL schema.
 | `user_permissions` | Per-user per-module can_view / can_edit / can_admin |
 | `refresh_tokens` | Hashed refresh tokens with expiry timestamps |
 
+### Channel Integrations (created on first startup)
+
+| Table | Description |
+|---|---|
+| `integrations` | Integration configs — Gmail, Outlook, SMTP/IMAP, API key entries with JSONB config, sync status, poller timestamps |
+
+### BI Chat (created on first startup)
+
+| Table | Description |
+|---|---|
+| `bi_chat_sessions` | BI Agent conversation sessions per user |
+| `bi_chat_messages` | Message history (user + assistant turns, with SQL query stored) |
+
 ---
 
 ## API Reference
@@ -443,6 +456,14 @@ All tables are in the `kirana_kart` PostgreSQL schema.
 | GET | `/analytics/summary` | `analytics.view` | KPI summary |
 | GET | `/analytics/evaluations` | `analytics.view` | Evaluation Matrix (paginated) |
 | POST | `/bi-agent/query` | `biAgent.view` | SSE — stream BI response |
+| GET | `/integrations` | `system.view` | List integrations (config redacted) |
+| POST | `/integrations` | `system.admin` | Create integration (Gmail / Outlook / SMTP / API) |
+| PATCH | `/integrations/{id}` | `system.admin` | Update integration name / config |
+| DELETE | `/integrations/{id}` | `system.admin` | Delete + revoke API key |
+| POST | `/integrations/{id}/toggle` | `system.admin` | Activate / deactivate |
+| POST | `/integrations/{id}/test` | `system.admin` | Test connectivity |
+| POST | `/integrations/{id}/sync` | `system.admin` | Trigger manual poll cycle |
+| POST | `/integrations/generate-key` | `system.admin` | Generate `kk_live_` API key |
 
 Full interactive docs: **http://localhost:8001/docs**
 
@@ -645,10 +666,12 @@ kirana_kart_final/
 │   │   │   │   ├── customers.py
 │   │   │   │   ├── analytics.py
 │   │   │   │   ├── system.py
-│   │   │   │   └── bi_agent.py
+│   │   │   │   ├── bi_agent.py
+│   │   │   │   └── integrations.py     # /integrations/* — channel integrations
 │   │   │   └── services/
 │   │   │       ├── auth_service.py     # JWT, bcrypt, RBAC dependencies
-│   │   │       └── oauth_service.py    # GitHub / Google / Microsoft
+│   │   │       ├── oauth_service.py    # GitHub / Google / Microsoft
+│   │   │       └── integration_service.py  # DB setup, Gmail/Outlook/IMAP polling, poller daemon
 │   │   ├── l1_ingestion/               # KB upload + registry
 │   │   ├── l2_cardinal/                # 5-phase ingest pipeline
 │   │   ├── l4_agents/                  # Celery worker + tasks
@@ -665,7 +688,10 @@ kirana_kart_final/
     │   │   ├── interceptors.ts         # Bearer + 401→refresh→retry
     │   │   └── governance/
     │   │       ├── auth.api.ts
-    │   │       └── users.api.ts
+    │   │       ├── users.api.ts
+    │   │       └── integrations.api.ts # Channel integrations API client
+    │   ├── types/
+    │   │   └── integration.types.ts    # Integration, IntegrationType, SyncStatus
     │   ├── lib/
     │   │   └── access.ts               # hasPermission(user, module, perm)
     │   ├── pages/
@@ -673,6 +699,9 @@ kirana_kart_final/
     │   │   │   ├── LoginPage.tsx
     │   │   │   ├── SignupPage.tsx
     │   │   │   └── OAuthCallbackPage.tsx
+    │   │   ├── system/
+    │   │   │   ├── SystemPage.tsx      # 5-tab system admin
+    │   │   │   └── IntegrationsPanel.tsx  # Channel integrations UI
     │   │   └── users/
     │   │       └── UserManagementPage.tsx
     │   ├── components/layout/
@@ -723,3 +752,7 @@ OpenAI rate-limit issue. Reduce `PROCESS_BATCH_SIZE` in your `.env`.
 - [ ] Register OAuth apps with production callback URLs
 - [ ] Restrict CORS in `app/admin/main.py` to your production frontend domain
 - [ ] Rotate the OpenAI API key and set via secret manager, not plain env
+- [ ] For Gmail integrations: create a Google Cloud project, enable the Gmail API, and generate OAuth2 credentials with the `https://mail.google.com/` scope
+- [ ] For Outlook integrations: register an Azure AD app with `Mail.Read` delegated permissions and grant admin consent
+- [ ] Rotate any generated `kk_live_` API keys if they are ever exposed; deletion via the Integrations UI immediately revokes ingest access
+- [ ] Consider encrypting sensitive JSONB config fields (`access_token`, `refresh_token`, `password`) at the DB level for production deployments

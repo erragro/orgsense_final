@@ -15,19 +15,21 @@ import { toast } from '@/stores/toast.store'
 import { useAuthStore } from '@/stores/auth.store'
 import { formatDate } from '@/lib/dates'
 import { cn } from '@/lib/cn'
-import { Activity, Server, Settings, FileText, Cpu } from 'lucide-react'
+import { Activity, Server, Settings, FileText, Cpu, Plug } from 'lucide-react'
+import { IntegrationsPanel } from './IntegrationsPanel'
 
-type Tab = 'health' | 'vector-jobs' | 'audit-logs' | 'models'
+type Tab = 'health' | 'vector-jobs' | 'audit-logs' | 'models' | 'integrations'
 
 export default function SystemPage() {
   const [activeTab, setActiveTab] = useState<Tab>('health')
-  const { role } = useAuthStore()
+  const { user } = useAuthStore()
 
   const TABS: { key: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { key: 'health', label: 'System Health', icon: Activity },
     { key: 'vector-jobs', label: 'Vector Jobs', icon: Cpu },
     { key: 'audit-logs', label: 'Audit Logs', icon: FileText },
     { key: 'models', label: 'Model Registry', icon: Settings },
+    { key: 'integrations', label: 'Integrations', icon: Plug },
   ]
 
   return (
@@ -45,9 +47,10 @@ export default function SystemPage() {
       </div>
 
       {activeTab === 'health' && <SystemHealthPanel />}
-      {activeTab === 'vector-jobs' && <VectorJobsPanel canPublish={role === 'publisher'} />}
+      {activeTab === 'vector-jobs' && <VectorJobsPanel canPublish={user?.is_super_admin === true} />}
       {activeTab === 'audit-logs' && <AuditLogsPanel />}
       {activeTab === 'models' && <ModelRegistryPanel />}
+      {activeTab === 'integrations' && <IntegrationsPanel />}
     </div>
   )
 }

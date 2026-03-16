@@ -200,7 +200,15 @@
       "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"\\\\d kirana_kart.bi_chat_sessions\")",
       "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \":*)",
       "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"ALTER TABLE kirana_kart.bi_chat_sessions ADD COLUMN IF NOT EXISTS user_id INTEGER;\" -c \"ALTER TABLE kirana_kart.bi_chat_sessions ALTER COLUMN token_hash DROP NOT NULL;\" -c \"ALTER TABLE kirana_kart.bi_chat_sessions DROP COLUMN IF EXISTS token_hash;\")",
-      "Bash(docker compose up --build -d)"
+      "Bash(docker compose up --build -d)",
+      "Bash(docker compose up -d governance)",
+      "Bash(__NEW_LINE_5862c05f8a8d5c83__ API_KEY=\"kk_live_073ef62a5765dbbd2cf91572b8518eb04f6a2c53fd0ff1e3ab6cd4a3fc12ece5\")",
+      "Bash(__NEW_LINE_5862c05f8a8d5c83__ echo \"=== Checking what Phase 3 does with this key ===\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"SELECT id, api_token, role FROM kirana_kart.admin_users WHERE api_token = ''$API_KEY'';\")",
+      "Bash(__NEW_LINE_5862c05f8a8d5c83__ echo \"\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"SELECT id, api_token, role FROM kirana_kart.admin_users ORDER BY id DESC LIMIT 10;\")",
+      "Bash(curl -s -w \"\\\\nHTTP_STATUS:%{http_code}\" -X POST http://localhost:8000/cardinal/ingest -H \"Authorization: Bearer $API_KEY\" -H \"Content-Type: application/json\" -d '{\"\"channel\"\":\"\"api\"\",\"\"source\"\":\"\"api\"\",\"\"org\"\":\"\"testorg\"\",\"\"business_line\"\":\"\"ecommerce\"\",\"\"module\"\":\"\"delivery\"\",\"\"payload\"\":{\"\"cx_email\"\":\"\"test@test.com\"\",\"\"subject\"\":\"\"Test Delete Verification\"\",\"\"description\"\":\"\"This is a test to verify the key was deleted properly\"\"}}')",
+      "Bash(docker compose up -d ui)"
     ]
   }
 }
