@@ -231,7 +231,15 @@
       "Bash(echo \"Exit code: $?\")",
       "Bash(echo \"TS exit: $?\")",
       "Bash(echo \"TSC EXIT: $?\")",
-      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -q -c \"SELECT ticket_id FROM kirana_kart.fdraw WHERE ticket_id = 9999;\")"
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -q -c \"SELECT ticket_id FROM kirana_kart.fdraw WHERE ticket_id = 9999;\")",
+      "Bash(xargs ls -la)",
+      "Bash(python3 -c \"import ast, sys; ast.parse\\(open\\(''app/admin/services/qa_python_evaluators.py''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''app/admin/services/qa_agent_service.py''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''app/admin/routes/qa_agent.py''\\).read\\(\\)\\); print\\(''OK''\\)\")",
+      "Bash(docker compose down)",
+      "Bash(docker compose up -d --build)",
+      "Bash(docker compose up -d --build governance)",
+      "Bash(docker compose up -d --build ui)"
     ]
   }
 }

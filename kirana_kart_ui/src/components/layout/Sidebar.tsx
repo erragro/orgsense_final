@@ -5,7 +5,7 @@ import { useAuthStore } from '@/stores/auth.store'
 import {
   LayoutDashboard, Ticket, TreeDeciduous,
   BookOpen, Shield, Users, BarChart3, Settings,
-  ChevronLeft, ChevronRight, LogOut, BrainCircuit, FlaskConical, UserCog, Cpu, type LucideIcon,
+  ChevronLeft, ChevronRight, LogOut, BrainCircuit, FlaskConical, UserCog, Cpu, ShieldCheck, type LucideIcon,
 } from 'lucide-react'
 import { hasPermission, type AppModule, type Permission } from '@/lib/access'
 import type { User } from '@/stores/auth.store'
@@ -53,6 +53,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: 'Cardinal',  icon: Cpu,          path: '/cardinal',  module: 'cardinal' },
       { label: 'BI Agent',  icon: BrainCircuit, path: '/bi-agent',  module: 'biAgent' },
+      { label: 'QA Agent',  icon: ShieldCheck,  path: '/qa-agent',  module: 'qaAgent' },
     ],
   },
   {
