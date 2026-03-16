@@ -196,7 +196,11 @@
       "Bash(npm install)",
       "Bash(pkill -f \"vite --port 5174\")",
       "Bash(lsof -ti :5174)",
-      "Bash(xargs kill -9)"
+      "Bash(xargs kill -9)",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"\\\\d kirana_kart.bi_chat_sessions\")",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \":*)",
+      "Bash(docker compose exec postgres psql -U orguser -d orgintelligence -c \"ALTER TABLE kirana_kart.bi_chat_sessions ADD COLUMN IF NOT EXISTS user_id INTEGER;\" -c \"ALTER TABLE kirana_kart.bi_chat_sessions ALTER COLUMN token_hash DROP NOT NULL;\" -c \"ALTER TABLE kirana_kart.bi_chat_sessions DROP COLUMN IF EXISTS token_hash;\")",
+      "Bash(docker compose up --build -d)"
     ]
   }
 }

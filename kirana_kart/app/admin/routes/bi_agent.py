@@ -45,7 +45,7 @@ _view = require_permission("biAgent", "view")
 # ============================================================
 
 def ensure_bi_tables() -> None:
-    """Create BI chat tables if they don't exist yet."""
+    """Create BI chat tables if they don't exist, and run column migrations."""
     ddl = """
     CREATE TABLE IF NOT EXISTS kirana_kart.bi_chat_sessions (
         id          SERIAL PRIMARY KEY,
@@ -65,9 +65,17 @@ def ensure_bi_tables() -> None:
         created_at  TIMESTAMPTZ  DEFAULT NOW()
     );
     """
+    # Migration: old schema used token_hash VARCHAR(64) instead of user_id INTEGER.
+    # Run each statement separately — multi-statement strings are unreliable with psycopg2.
+    migrations = [
+        "ALTER TABLE kirana_kart.bi_chat_sessions ADD COLUMN IF NOT EXISTS user_id INTEGER",
+        "ALTER TABLE kirana_kart.bi_chat_sessions DROP COLUMN IF EXISTS token_hash",
+    ]
     try:
         with engine.connect() as conn:
             conn.execute(text(ddl))
+            for stmt in migrations:
+                conn.execute(text(stmt))
             conn.commit()
         logger.info("BI chat tables ensured.")
     except Exception as exc:

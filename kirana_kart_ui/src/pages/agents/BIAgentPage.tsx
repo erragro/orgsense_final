@@ -134,7 +134,7 @@ function FilterBanner() {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function BIAgentPage() {
-  const { token } = useAuthStore()
+  const { accessToken } = useAuthStore()
   const { addToast } = useToastStore()
   const qc = useQueryClient()
 
@@ -154,6 +154,9 @@ export default function BIAgentPage() {
       qc.invalidateQueries({ queryKey: ['bi-sessions'] })
       setActiveSessionId(s.id)
       setLiveMessages([])
+    },
+    onError: () => {
+      addToast({ type: 'error', message: 'Failed to create new chat. Please try again.' })
     },
   })
 
@@ -261,7 +264,7 @@ export default function BIAgentPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-admin-token': token ?? '',
+          'Authorization': `Bearer ${accessToken ?? ''}`,
         },
         body: JSON.stringify({
           session_id: activeSessionId,
@@ -340,7 +343,7 @@ export default function BIAgentPage() {
     } finally {
       setStreaming(false)
     }
-  }, [chatEnabled, question, streaming, activeSessionId, module, dateFrom, dateTo, token, qc])
+  }, [chatEnabled, question, streaming, activeSessionId, module, dateFrom, dateTo, accessToken, qc])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
