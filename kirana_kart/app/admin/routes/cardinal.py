@@ -930,3 +930,264 @@ def reset_schedule(
     if not row:
         raise HTTPException(status_code=404, detail=f"Schedule row not found for: {task_key}")
     return _serialize_row(row)
+
+
+# ============================================================
+# ACTION REGISTRY REQUEST MODELS
+# ============================================================
+
+class ActionCodeCreateRequest(BaseModel):
+    action_key: str
+    action_code_id: str
+    action_name: str
+    action_description: Optional[str] = None
+    freshdesk_status: Optional[int] = None
+    freshdesk_status_name: Optional[str] = None
+    requires_refund: bool = False
+    requires_escalation: bool = False
+    automation_eligible: bool = True
+
+
+class ActionCodeUpdateRequest(BaseModel):
+    action_key: Optional[str] = None
+    action_name: Optional[str] = None
+    action_description: Optional[str] = None
+    freshdesk_status: Optional[int] = None
+    freshdesk_status_name: Optional[str] = None
+    requires_refund: Optional[bool] = None
+    requires_escalation: Optional[bool] = None
+    automation_eligible: Optional[bool] = None
+
+
+# ============================================================
+# GET /cardinal/action-registry
+# ============================================================
+
+@router.get("/action-registry")
+def list_action_registry(user: UserContext = Depends(_view)):
+    """List all master_action_codes rows."""
+    with get_db_session() as session:
+        rows = session.execute(
+            text("""
+                SELECT id, action_key, action_code_id, action_name, action_description,
+                       freshdesk_status, freshdesk_status_name,
+                       requires_refund, requires_escalation, automation_eligible,
+                       created_at
+                FROM kirana_kart.master_action_codes
+                ORDER BY id
+            """)
+        ).mappings().all()
+    return [_serialize_row(r) for r in rows]
+
+
+# ============================================================
+# POST /cardinal/action-registry
+# ============================================================
+
+@router.post("/action-registry", status_code=201)
+def create_action_code(body: ActionCodeCreateRequest, user: UserContext = Depends(_admin)):
+    """Insert a new action code into master_action_codes."""
+    with get_db_session() as session:
+        row = session.execute(
+            text("""
+                INSERT INTO kirana_kart.master_action_codes
+                    (action_key, action_code_id, action_name, action_description,
+                     freshdesk_status, freshdesk_status_name,
+                     requires_refund, requires_escalation, automation_eligible)
+                VALUES
+                    (:action_key, :action_code_id, :action_name, :action_description,
+                     :freshdesk_status, :freshdesk_status_name,
+                     :requires_refund, :requires_escalation, :automation_eligible)
+                RETURNING id, action_key, action_code_id, action_name, action_description,
+                          freshdesk_status, freshdesk_status_name,
+                          requires_refund, requires_escalation, automation_eligible, created_at
+            """),
+            {
+                "action_key":            body.action_key,
+                "action_code_id":        body.action_code_id,
+                "action_name":           body.action_name,
+                "action_description":    body.action_description,
+                "freshdesk_status":      body.freshdesk_status,
+                "freshdesk_status_name": body.freshdesk_status_name,
+                "requires_refund":       body.requires_refund,
+                "requires_escalation":   body.requires_escalation,
+                "automation_eligible":   body.automation_eligible,
+            },
+        ).mappings().first()
+    if not row:
+        raise HTTPException(status_code=500, detail="Insert failed")
+    return _serialize_row(row)
+
+
+# ============================================================
+# PUT /cardinal/action-registry/{id}
+# ============================================================
+
+@router.put("/action-registry/{code_id}")
+def update_action_code(code_id: int, body: ActionCodeUpdateRequest, user: UserContext = Depends(_admin)):
+    """Update an action code by id."""
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    set_parts = [f"{k} = :{k}" for k in fields]
+    params = dict(fields)
+    params["code_id"] = code_id
+
+    with get_db_session() as session:
+        row = session.execute(
+            text(f"""
+                UPDATE kirana_kart.master_action_codes
+                SET {", ".join(set_parts)}
+                WHERE id = :code_id
+                RETURNING id, action_key, action_code_id, action_name, action_description,
+                          freshdesk_status, freshdesk_status_name,
+                          requires_refund, requires_escalation, automation_eligible, created_at
+            """),
+            params,
+        ).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Action code {code_id} not found")
+    return _serialize_row(row)
+
+
+# ============================================================
+# DELETE /cardinal/action-registry/{id}
+# ============================================================
+
+@router.delete("/action-registry/{code_id}", status_code=204)
+def delete_action_code(code_id: int, user: UserContext = Depends(_admin)):
+    """Delete an action code by id."""
+    with get_db_session() as session:
+        result = session.execute(
+            text("DELETE FROM kirana_kart.master_action_codes WHERE id = :code_id"),
+            {"code_id": code_id},
+        )
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail=f"Action code {code_id} not found")
+
+
+# ============================================================
+# TEMPLATE REQUEST MODELS
+# ============================================================
+
+class TemplateCreateRequest(BaseModel):
+    template_ref: str
+    action_code_id: Optional[str] = None
+    issue_l1: Optional[str] = None
+    issue_l2: Optional[str] = None
+    template_v1: Optional[str] = None
+    template_v2: Optional[str] = None
+    template_v3: Optional[str] = None
+    template_v4: Optional[str] = None
+    template_v5: Optional[str] = None
+
+
+class TemplateUpdateRequest(BaseModel):
+    template_ref: Optional[str] = None
+    action_code_id: Optional[str] = None
+    issue_l1: Optional[str] = None
+    issue_l2: Optional[str] = None
+    template_v1: Optional[str] = None
+    template_v2: Optional[str] = None
+    template_v3: Optional[str] = None
+    template_v4: Optional[str] = None
+    template_v5: Optional[str] = None
+
+
+# ============================================================
+# GET /cardinal/templates
+# ============================================================
+
+@router.get("/templates")
+def list_templates(user: UserContext = Depends(_view)):
+    """List all response_templates rows."""
+    with get_db_session() as session:
+        rows = session.execute(
+            text("""
+                SELECT id, template_ref, action_code_id, issue_l1, issue_l2,
+                       template_v1, template_v2, template_v3, template_v4, template_v5,
+                       created_at, updated_at
+                FROM kirana_kart.response_templates
+                ORDER BY id
+            """)
+        ).mappings().all()
+    return [_serialize_row(r) for r in rows]
+
+
+# ============================================================
+# POST /cardinal/templates
+# ============================================================
+
+@router.post("/templates", status_code=201)
+def create_template(body: TemplateCreateRequest, user: UserContext = Depends(_admin)):
+    """Insert a new response template."""
+    with get_db_session() as session:
+        row = session.execute(
+            text("""
+                INSERT INTO kirana_kart.response_templates
+                    (template_ref, action_code_id, issue_l1, issue_l2,
+                     template_v1, template_v2, template_v3, template_v4, template_v5)
+                VALUES
+                    (:template_ref, :action_code_id, :issue_l1, :issue_l2,
+                     :template_v1, :template_v2, :template_v3, :template_v4, :template_v5)
+                RETURNING id, template_ref, action_code_id, issue_l1, issue_l2,
+                          template_v1, template_v2, template_v3, template_v4, template_v5,
+                          created_at, updated_at
+            """),
+            body.model_dump(),
+        ).mappings().first()
+    if not row:
+        raise HTTPException(status_code=500, detail="Insert failed")
+    return _serialize_row(row)
+
+
+# ============================================================
+# PUT /cardinal/templates/{id}
+# ============================================================
+
+@router.put("/templates/{template_id}")
+def update_template(template_id: int, body: TemplateUpdateRequest, user: UserContext = Depends(_admin)):
+    """Update a response template by id."""
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    set_parts = [f"{k} = :{k}" for k in fields]
+    set_parts.append("updated_at = NOW()")
+    params = dict(fields)
+    params["template_id"] = template_id
+
+    with get_db_session() as session:
+        row = session.execute(
+            text(f"""
+                UPDATE kirana_kart.response_templates
+                SET {", ".join(set_parts)}
+                WHERE id = :template_id
+                RETURNING id, template_ref, action_code_id, issue_l1, issue_l2,
+                          template_v1, template_v2, template_v3, template_v4, template_v5,
+                          created_at, updated_at
+            """),
+            params,
+        ).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Template {template_id} not found")
+    return _serialize_row(row)
+
+
+# ============================================================
+# DELETE /cardinal/templates/{id}
+# ============================================================
+
+@router.delete("/templates/{template_id}", status_code=204)
+def delete_template(template_id: int, user: UserContext = Depends(_admin)):
+    """Delete a response template by id."""
+    with get_db_session() as session:
+        result = session.execute(
+            text("DELETE FROM kirana_kart.response_templates WHERE id = :template_id"),
+            {"template_id": template_id},
+        )
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail=f"Template {template_id} not found")
