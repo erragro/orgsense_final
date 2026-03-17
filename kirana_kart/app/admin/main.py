@@ -27,6 +27,7 @@ from app.metrics import (
 from app.admin.services.auth_service import ensure_auth_tables, ensure_bootstrap_admin
 from app.admin.routes.bi_agent import ensure_bi_tables
 from app.admin.routes.qa_agent import ensure_qa_tables
+from app.admin.routes.cardinal import ensure_schedule_table
 from app.admin.services.integration_service import ensure_integration_tables, run_integration_poller
 
 import logging
@@ -112,6 +113,7 @@ async def lifespan(app: FastAPI):
     ensure_bootstrap_admin()
     ensure_bi_tables()
     ensure_qa_tables()
+    ensure_schedule_table()
     ensure_integration_tables()
     threading.Thread(
         target=run_integration_poller,

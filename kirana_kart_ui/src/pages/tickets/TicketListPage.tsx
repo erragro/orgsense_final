@@ -6,7 +6,7 @@
 // Types: FdrawTicket (ticket.types.ts)
 
 import { useState } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Card, CardContent } from '@/components/ui/Card'
@@ -16,12 +16,10 @@ import { SearchInput } from '@/components/common/SearchInput'
 import { PaginationBar } from '@/components/common/PaginationBar'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
-import { Button } from '@/components/ui/Button'
 import { ticketsApi } from '@/api/governance/tickets.api'
 import { VALID_MODULES } from '@/lib/constants'
 import { formatDate } from '@/lib/dates'
 import { truncate } from '@/lib/utils'
-import { toast } from '@/stores/toast.store'
 import { cn } from '@/lib/cn'
 import { Ticket } from 'lucide-react'
 
@@ -49,19 +47,6 @@ export default function TicketListPage() {
     },
   })
 
-  const dispatchMutation = useMutation({
-    mutationFn: (payload: { ticket_ids?: number[]; mode?: 'latest'; limit?: number }) =>
-      ticketsApi.dispatch(payload).then((r) => r.data),
-    onSuccess: (res) => {
-      toast.success('Dispatched tickets', `${res.dispatched} queued`)
-      refetch()
-    },
-    onError: (err: unknown) => {
-      const e = err as { response?: { data?: { detail?: string } } }
-      toast.error('Dispatch failed', e.response?.data?.detail ?? 'Unable to queue tickets')
-    },
-  })
-
   const moduleOptions = [{ value: '', label: 'All Modules' }, ...VALID_MODULES.map((m) => ({ value: m, label: m.charAt(0).toUpperCase() + m.slice(1) }))]
   const stageOptions = [
     { value: '', label: 'All Stages' },
@@ -79,30 +64,6 @@ export default function TicketListPage() {
       <PageHeader
         title="Tickets"
         subtitle="Browse and inspect all ingested tickets"
-        actions={
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              loading={dispatchMutation.isPending}
-              disabled={!data?.items?.length}
-              onClick={() => {
-                const ids = data?.items?.map((t) => Number(t.ticket_id)).filter(Boolean) ?? []
-                dispatchMutation.mutate({ ticket_ids: ids })
-              }}
-            >
-              Process Page
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              loading={dispatchMutation.isPending}
-              onClick={() => dispatchMutation.mutate({ mode: 'latest', limit: 100 })}
-            >
-              Process Latest 100
-            </Button>
-          </div>
-        }
       />
 
       <div className="flex gap-3 mb-4">

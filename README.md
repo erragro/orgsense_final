@@ -1,6 +1,6 @@
 # Kirana Kart — Policy Governance Platform
 
-**Version:** 3.3.0
+**Version:** 3.5.0
 **Stack:** FastAPI · React 19 · PostgreSQL · Weaviate · Redis · Celery · OpenAI · Docker
 
 ---
@@ -163,7 +163,7 @@ Every user has three independent permission flags per module:
 | `edit` | Create and update operations |
 | `admin` | Publish, rollback, vectorize, delete |
 
-**Modules:** `dashboard` · `tickets` · `taxonomy` · `knowledgeBase` · `policy` · `customers` · `analytics` · `system` · `biAgent` · `sandbox` · `cardinal`
+**Modules:** `dashboard` · `tickets` · `taxonomy` · `knowledgeBase` · `policy` · `customers` · `analytics` · `system` · `biAgent` · `sandbox` · `cardinal` · `qaAgent`
 
 > **Note:** The `cardinal` module is **default-deny** — new signups receive `can_view = false`. A super-admin must explicitly grant access via the `/users` page.
 
@@ -282,7 +282,7 @@ React 19 + TypeScript + Vite. In production, build with `npm run build` and serv
 | Module | Route | Description |
 |---|---|---|
 | Dashboard | `/dashboard` | KPIs — tickets, CSAT, SLA breach rate, refund totals, daily trends |
-| Tickets | `/tickets` | Paginated list, full-text search, LLM execution trace per ticket |
+| Tickets | `/tickets` | Paginated list, full-text search, LLM execution trace per ticket. All processing runs exclusively through the Cardinal pipeline — dispatch buttons have been removed. |
 | Sandbox | `/sandbox` | Submit test tickets without affecting production data |
 | Taxonomy | `/taxonomy` | Issue code hierarchy — draft, version, publish, rollback, vectorize |
 | Knowledge Base | `/knowledge-base` | Upload docs, compile via LLM, vectorize, publish versions |
@@ -290,7 +290,8 @@ React 19 + TypeScript + Vite. In production, build with `npm run build` and serv
 | Customers | `/customers` | Profiles, order history, churn risk |
 | Analytics | `/analytics` | Evaluation Matrix — 16K+ tickets with LLM output analysis |
 | BI Agent | `/bi-agent` | Natural language → SQL → streamed analyst-style response |
-| **Cardinal** | `/cardinal` | **Pipeline observability** — 5-phase ingest stats, LLM stage breakdown, per-ticket execution traces, audit log, reprocess tool. *Admin-only access — default-deny for new users.* |
+| **Cardinal** | `/cardinal` | **Pipeline observability & scheduler management** — 5-phase ingest stats, LLM stage breakdown, per-ticket execution traces, audit log, reprocess tool, and Celery Beat scheduler UI (enable/disable/trigger periodic tasks). *Admin-only access — default-deny for new users.* |
+| **QA Agent** | `/qa-agent` | **Hybrid QA evaluation** — 12 deterministic Python checks + 10 LLM semantic parameters; results stream live via SSE; graded A–F from a blended score (35% Python + 65% LLM) |
 | System | `/system` | Service health, vector jobs, audit logs, model registry, **channel integrations** |
 | Users | `/users` | User table + per-module permission editor (system.admin only) |
 
@@ -414,6 +415,19 @@ All tables are in the `kirana_kart` PostgreSQL schema.
 | `bi_chat_sessions` | BI Agent conversation sessions per user |
 | `bi_chat_messages` | Message history (user + assistant turns, with SQL query stored) |
 
+### QA Agent (created on first startup)
+
+| Table | Description |
+|---|---|
+| `qa_sessions` | Named evaluation sessions (label, user, timestamps) |
+| `qa_evaluations` | Per-ticket evaluation results — `python_qa_score NUMERIC(5,4)`, `python_findings JSONB` (12 check results), `llm_qa_score`, `overall_score`, `grade` (A–F), `llm_parameters JSONB` (10 semantic scores), SSE streaming state |
+
+### Cardinal Scheduler (created on first startup)
+
+| Table | Description |
+|---|---|
+| `cardinal_beat_schedule` | Celery Beat schedule config — one row per periodic task. Stores `task_key`, `display_name`, `schedule_type` (`interval`/`crontab`), `interval_seconds`, `cron_expression`, `enabled` flag, `last_triggered_at`, and `updated_by`. Seeded with 5 default rows on governance startup. |
+
 ---
 
 ## API Reference
@@ -468,7 +482,29 @@ All tables are in the `kirana_kart` PostgreSQL schema.
 | POST | `/integrations/{id}/sync` | `system.admin` | Trigger manual poll cycle |
 | POST | `/integrations/generate-key` | `system.admin` | Generate `kk_live_` API key |
 
-### Cardinal Intelligence (`/cardinal`) — requires `cardinal.view` (GET) or `cardinal.admin` (POST)
+### QA Agent (`/qa-agent`) — requires `qaAgent.view`
+
+| Method | Endpoint | Permission | Description |
+|---|---|---|---|
+| GET | `/qa-agent/sessions` | `qaAgent.view` | List all QA sessions |
+| POST | `/qa-agent/sessions` | `qaAgent.view` | Create a new QA session |
+| DELETE | `/qa-agent/sessions/{id}` | `qaAgent.view` | Delete a session and its evaluations |
+| GET | `/qa-agent/tickets/search?limit=N` | `qaAgent.view` | List N most-recent completed tickets (no search params required) |
+| POST | `/qa-agent/evaluate` | `qaAgent.view` | **SSE stream** — run hybrid evaluation (12 Python checks → `python_check` events, then 10 LLM params → `parameter` events, then `summary` + `done`) |
+| GET | `/qa-agent/evaluations/{id}` | `qaAgent.view` | Fetch stored evaluation with all check/parameter scores |
+
+**SSE event sequence:**
+```
+python_check × 12  →  python_summary  →  parameter × 10  →  summary  →  done
+```
+
+**Blended score formula:**
+```
+overall_score = 0.35 × python_score + 0.65 × llm_score
+Grade: A ≥ 90% · B ≥ 75% · C ≥ 60% · D ≥ 45% · F < 45%
+```
+
+### Cardinal Intelligence (`/cardinal`) — requires `cardinal.view` (GET) or `cardinal.admin` (POST/PATCH)
 
 > Access is **default-deny**: new accounts receive `can_view = false`. A super-admin must grant it.
 
@@ -480,6 +516,10 @@ All tables are in the `kirana_kart` PostgreSQL schema.
 | GET | `/cardinal/executions/{ticket_id}` | `cardinal.view` | Full trace for one ticket (all LLM stages + metrics + audit events) |
 | GET | `/cardinal/audit` | `cardinal.view` | Paginated execution audit log |
 | POST | `/cardinal/reprocess/{ticket_id}` | `cardinal.admin` | Re-submit a ticket through the full Cardinal pipeline |
+| GET | `/cardinal/schedules` | `cardinal.view` | List all 5 Celery Beat schedule configs |
+| PATCH | `/cardinal/schedules/{task_key}` | `cardinal.admin` | Update `enabled`, `interval_seconds`, or `cron_expression` |
+| POST | `/cardinal/schedules/{task_key}/trigger` | `cardinal.admin` | Manually fire the task immediately via Celery `send_task` |
+| POST | `/cardinal/schedules/{task_key}/reset` | `cardinal.admin` | Restore default interval + re-enable the task |
 
 Full interactive docs: **http://localhost:8001/docs**
 
@@ -684,11 +724,14 @@ kirana_kart_final/
 │   │   │   │   ├── system.py
 │   │   │   │   ├── bi_agent.py
 │   │   │   │   ├── integrations.py     # /integrations/* — channel integrations
-│   │   │   │   └── cardinal.py         # /cardinal/* — pipeline observability + reprocess
+│   │   │   │   ├── cardinal.py         # /cardinal/* — pipeline observability, reprocess, beat scheduler CRUD
+│   │   │   │   └── qa_agent.py         # /qa-agent/* — QA sessions, ticket search, SSE evaluate
 │   │   │   └── services/
 │   │   │       ├── auth_service.py     # JWT, bcrypt, RBAC dependencies
 │   │   │       ├── oauth_service.py    # GitHub / Google / Microsoft
-│   │   │       └── integration_service.py  # DB setup, Gmail/Outlook/IMAP polling, poller daemon
+│   │   │       ├── integration_service.py  # DB setup, Gmail/Outlook/IMAP polling, poller daemon
+│   │   │       ├── qa_agent_service.py # QA session/evaluation DB operations, table setup
+│   │   │       └── qa_python_evaluators.py # 12 deterministic Python check functions
 │   │   ├── l1_ingestion/               # KB upload + registry
 │   │   ├── l2_cardinal/                # 5-phase ingest pipeline
 │   │   ├── l4_agents/                  # Celery worker + tasks
@@ -707,10 +750,12 @@ kirana_kart_final/
     │   │       ├── auth.api.ts
     │   │       ├── users.api.ts
     │   │       ├── integrations.api.ts # Channel integrations API client
-    │   │       └── cardinal.api.ts     # Cardinal pipeline observability API client
+    │   │       ├── cardinal.api.ts     # Cardinal pipeline observability + schedule CRUD API client
+    │   │       └── qa.api.ts           # QA Agent sessions, ticket search, SSE evaluate
     │   ├── types/
     │   │   ├── integration.types.ts    # Integration, IntegrationType, SyncStatus
-    │   │   └── cardinal.types.ts       # CardinalOverview, PhaseStats, ExecutionDetail, etc.
+    │   │   ├── cardinal.types.ts       # CardinalOverview, PhaseStats, ExecutionDetail, BeatSchedule, ScheduleUpdate, TriggerResult
+    │   │   └── qa.types.ts             # QASession, QAEvaluation, QATicketResult, SSE event types
     │   ├── lib/
     │   │   └── access.ts               # hasPermission(user, module, perm)
     │   ├── pages/
@@ -722,12 +767,15 @@ kirana_kart_final/
     │   │   │   ├── SystemPage.tsx      # 5-tab system admin
     │   │   │   └── IntegrationsPanel.tsx  # Channel integrations UI
     │   │   ├── cardinal/
-    │   │   │   ├── CardinalPage.tsx    # 4-tab Cardinal Intelligence page
+    │   │   │   ├── CardinalPage.tsx    # 5-tab Cardinal Intelligence page
     │   │   │   └── tabs/
     │   │   │       ├── OverviewTab.tsx     # Pipeline stats + volume trend + distribution charts
     │   │   │       ├── PhaseAnalysisTab.tsx # Per-LLM-stage pass/fail cards + error rate chart
     │   │   │       ├── ExecutionTab.tsx    # Paginated execution table + slide-over trace drawer
-    │   │   │       └── OperationsTab.tsx   # Audit log + reprocess ticket tool
+    │   │   │       ├── OperationsTab.tsx   # Audit log + reprocess ticket tool
+    │   │   │       └── SchedulersTab.tsx   # Beat schedule table — toggle, inline edit, Run Now
+    │   │   ├── agents/
+    │   │   │   └── QAAgentPage.tsx     # QA Agent — session sidebar, TicketListPanel, SSE evaluation viewer
     │   │   └── users/
     │   │       └── UserManagementPage.tsx
     │   ├── components/layout/
@@ -782,4 +830,4 @@ OpenAI rate-limit issue. Reduce `PROCESS_BATCH_SIZE` in your `.env`.
 - [ ] For Outlook integrations: register an Azure AD app with `Mail.Read` delegated permissions and grant admin consent
 - [ ] Rotate any generated `kk_live_` API keys if they are ever exposed; deletion via the Integrations UI immediately revokes ingest access
 - [ ] Consider encrypting sensitive JSONB config fields (`access_token`, `refresh_token`, `password`) at the DB level for production deployments
-- [ ] Grant `cardinal.view` (and optionally `cardinal.admin` for reprocess) only to trusted operations team members — the module is default-deny for all new accounts by design
+- [ ] Grant `cardinal.view` (and optionally `cardinal.admin` for reprocess + scheduler management) only to trusted operations team members — the module is default-deny for all new accounts by design

@@ -6,19 +6,21 @@
 import { useState } from 'react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { cn } from '@/lib/cn'
-import { Activity, Layers, Cpu, Wrench } from 'lucide-react'
+import { Activity, Layers, Cpu, Wrench, Clock } from 'lucide-react'
 import { OverviewTab }      from './tabs/OverviewTab'
 import { PhaseAnalysisTab } from './tabs/PhaseAnalysisTab'
 import { ExecutionTab }     from './tabs/ExecutionTab'
 import { OperationsTab }    from './tabs/OperationsTab'
+import { SchedulersTab }    from './tabs/SchedulersTab'
 
-type Tab = 'overview' | 'phases' | 'executions' | 'operations'
+type Tab = 'overview' | 'phases' | 'executions' | 'operations' | 'schedulers'
 
 const TABS: { key: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: 'overview',    label: 'Pipeline Overview', icon: Activity },
   { key: 'phases',      label: 'Phase Analysis',    icon: Layers },
   { key: 'executions',  label: 'LLM Execution',     icon: Cpu },
   { key: 'operations',  label: 'Operations',        icon: Wrench },
+  { key: 'schedulers',  label: 'Schedulers',        icon: Clock },
 ]
 
 export default function CardinalPage() {
@@ -55,6 +57,7 @@ export default function CardinalPage() {
       {activeTab === 'phases'      && <PhaseAnalysisTab />}
       {activeTab === 'executions'  && <ExecutionTab />}
       {activeTab === 'operations'  && <OperationsTab />}
+      {activeTab === 'schedulers'  && <SchedulersTab />}
     </div>
   )
 }
