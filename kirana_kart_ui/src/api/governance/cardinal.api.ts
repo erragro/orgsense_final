@@ -15,6 +15,10 @@ import type {
   BeatSchedule,
   ScheduleUpdate,
   TriggerResult,
+  ActionCodeEntry,
+  ActionCodePayload,
+  ResponseTemplate,
+  TemplatePayload,
 } from '@/types/cardinal.types'
 
 export const cardinalApi = {
@@ -61,4 +65,40 @@ export const cardinalApi = {
   /** Reset a schedule to default interval and re-enable it. Requires cardinal.admin. */
   resetSchedule: (taskKey: string) =>
     governanceClient.post<BeatSchedule>(`/cardinal/schedules/${taskKey}/reset`),
+
+  // ── Action Registry ───────────────────────────────────────────────────────
+
+  /** List all master_action_codes rows. Requires cardinal.view. */
+  listActionRegistry: () =>
+    governanceClient.get<ActionCodeEntry[]>('/cardinal/action-registry'),
+
+  /** Create a new action code. Requires cardinal.admin. */
+  createActionCode: (payload: ActionCodePayload) =>
+    governanceClient.post<ActionCodeEntry>('/cardinal/action-registry', payload),
+
+  /** Update an action code by id. Requires cardinal.admin. */
+  updateActionCode: (id: number, payload: Partial<ActionCodePayload>) =>
+    governanceClient.put<ActionCodeEntry>(`/cardinal/action-registry/${id}`, payload),
+
+  /** Delete an action code by id. Requires cardinal.admin. */
+  deleteActionCode: (id: number) =>
+    governanceClient.delete(`/cardinal/action-registry/${id}`),
+
+  // ── Templates ─────────────────────────────────────────────────────────────
+
+  /** List all response_templates rows. Requires cardinal.view. */
+  listTemplates: () =>
+    governanceClient.get<ResponseTemplate[]>('/cardinal/templates'),
+
+  /** Create a new response template. Requires cardinal.admin. */
+  createTemplate: (payload: TemplatePayload) =>
+    governanceClient.post<ResponseTemplate>('/cardinal/templates', payload),
+
+  /** Update a response template by id. Requires cardinal.admin. */
+  updateTemplate: (id: number, payload: Partial<TemplatePayload>) =>
+    governanceClient.put<ResponseTemplate>(`/cardinal/templates/${id}`, payload),
+
+  /** Delete a response template by id. Requires cardinal.admin. */
+  deleteTemplate: (id: number) =>
+    governanceClient.delete(`/cardinal/templates/${id}`),
 }

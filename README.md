@@ -1,6 +1,6 @@
 # Kirana Kart — Policy Governance Platform
 
-**Version:** 3.5.0
+**Version:** 3.6.0
 **Stack:** FastAPI · React 19 · PostgreSQL · Weaviate · Redis · Celery · OpenAI · Docker
 
 ---
@@ -285,12 +285,12 @@ React 19 + TypeScript + Vite. In production, build with `npm run build` and serv
 | Tickets | `/tickets` | Paginated list, full-text search, LLM execution trace per ticket. All processing runs exclusively through the Cardinal pipeline — dispatch buttons have been removed. |
 | Sandbox | `/sandbox` | Submit test tickets without affecting production data |
 | Taxonomy | `/taxonomy` | Issue code hierarchy — draft, version, publish, rollback, vectorize |
-| Knowledge Base | `/knowledge-base` | Upload docs, compile via LLM, vectorize, publish versions |
+| Knowledge Base | `/knowledge-base` | 5-tab module: upload & edit policy docs, guided pipeline workflow (compile → vectorize → publish), published versions with rollback, action code viewer + LLM extractor, and decision matrix (compiled rules per version) |
 | Policy | `/policy` | Rule registry, simulation A/B tests, shadow policy mode |
 | Customers | `/customers` | Profiles, order history, churn risk |
 | Analytics | `/analytics` | Evaluation Matrix — 16K+ tickets with LLM output analysis |
 | BI Agent | `/bi-agent` | Natural language → SQL → streamed analyst-style response |
-| **Cardinal** | `/cardinal` | **Pipeline observability & scheduler management** — 5-phase ingest stats, LLM stage breakdown, per-ticket execution traces, audit log, reprocess tool, and Celery Beat scheduler UI (enable/disable/trigger periodic tasks). *Admin-only access — default-deny for new users.* |
+| **Cardinal** | `/cardinal` | **Pipeline observability, scheduler management & registry CRUD** — 7-tab module: 5-phase ingest stats, LLM stage breakdown, per-ticket execution traces, audit log, reprocess tool, Celery Beat scheduler UI, full CRUD for **Action Registry** (`master_action_codes`), and full CRUD for **Response Templates** (`response_templates`). *Admin-only access — default-deny for new users.* |
 | **QA Agent** | `/qa-agent` | **Hybrid QA evaluation** — 12 deterministic Python checks + 10 LLM semantic parameters; results stream live via SSE; graded A–F from a blended score (35% Python + 65% LLM) |
 | System | `/system` | Service health, vector jobs, audit logs, model registry, **channel integrations** |
 | Users | `/users` | User table + per-module permission editor (system.admin only) |
@@ -382,7 +382,8 @@ All tables are in the `kirana_kart` PostgreSQL schema.
 |---|---|
 | `policy_versions` | Immutable policy snapshots |
 | `rule_registry` | Compiled rules (conditions, actions, constraints) |
-| `master_action_codes` | 28 action codes (REFUND_*, REJECT_*, ESCALATE_*, etc.) |
+| `master_action_codes` | 28 action codes (REFUND_*, REJECT_*, ESCALATE_*, etc.) — fully managed via Cardinal → Action Registry tab |
+| `response_templates` | Response template library — template_ref, action_code_id, issue_l1/l2, and 5 variant text slots (template_v1..v5) — managed via Cardinal → Templates tab |
 | `policy_shadow_results` | Shadow vs active comparison results |
 
 ### Knowledge Base & Taxonomy
@@ -520,6 +521,14 @@ Grade: A ≥ 90% · B ≥ 75% · C ≥ 60% · D ≥ 45% · F < 45%
 | PATCH | `/cardinal/schedules/{task_key}` | `cardinal.admin` | Update `enabled`, `interval_seconds`, or `cron_expression` |
 | POST | `/cardinal/schedules/{task_key}/trigger` | `cardinal.admin` | Manually fire the task immediately via Celery `send_task` |
 | POST | `/cardinal/schedules/{task_key}/reset` | `cardinal.admin` | Restore default interval + re-enable the task |
+| GET | `/cardinal/action-registry` | `cardinal.view` | List all master action codes |
+| POST | `/cardinal/action-registry` | `cardinal.admin` | Create a new action code |
+| PUT | `/cardinal/action-registry/{id}` | `cardinal.admin` | Update an action code by id |
+| DELETE | `/cardinal/action-registry/{id}` | `cardinal.admin` | Delete an action code by id |
+| GET | `/cardinal/templates` | `cardinal.view` | List all response templates |
+| POST | `/cardinal/templates` | `cardinal.admin` | Create a new response template |
+| PUT | `/cardinal/templates/{id}` | `cardinal.admin` | Update a response template by id |
+| DELETE | `/cardinal/templates/{id}` | `cardinal.admin` | Delete a response template by id |
 
 Full interactive docs: **http://localhost:8001/docs**
 
@@ -724,7 +733,7 @@ kirana_kart_final/
 │   │   │   │   ├── system.py
 │   │   │   │   ├── bi_agent.py
 │   │   │   │   ├── integrations.py     # /integrations/* — channel integrations
-│   │   │   │   ├── cardinal.py         # /cardinal/* — pipeline observability, reprocess, beat scheduler CRUD
+│   │   │   │   ├── cardinal.py         # /cardinal/* — pipeline observability, reprocess, beat scheduler, action registry, and templates CRUD
 │   │   │   │   └── qa_agent.py         # /qa-agent/* — QA sessions, ticket search, SSE evaluate
 │   │   │   └── services/
 │   │   │       ├── auth_service.py     # JWT, bcrypt, RBAC dependencies
@@ -750,11 +759,14 @@ kirana_kart_final/
     │   │       ├── auth.api.ts
     │   │       ├── users.api.ts
     │   │       ├── integrations.api.ts # Channel integrations API client
-    │   │       ├── cardinal.api.ts     # Cardinal pipeline observability + schedule CRUD API client
+    │   │       ├── cardinal.api.ts     # Cardinal: observability + schedule + action registry + templates CRUD
+    │   │       ├── kb.api.ts           # KB: upload, versions, publish, rollback, rule registry
+    │   │       ├── compiler.api.ts     # Compiler: compile, action-code list, extract-actions
     │   │       └── qa.api.ts           # QA Agent sessions, ticket search, SSE evaluate
     │   ├── types/
     │   │   ├── integration.types.ts    # Integration, IntegrationType, SyncStatus
-    │   │   ├── cardinal.types.ts       # CardinalOverview, PhaseStats, ExecutionDetail, BeatSchedule, ScheduleUpdate, TriggerResult
+    │   │   ├── cardinal.types.ts       # CardinalOverview, PhaseStats, ExecutionDetail, BeatSchedule, ActionCodeEntry, ActionCodePayload, ResponseTemplate, TemplatePayload
+    │   │   ├── kb.types.ts             # KBUpload, KBVersion, ActionCode, RuleEntry, ExtractActionsResult
     │   │   └── qa.types.ts             # QASession, QAEvaluation, QATicketResult, SSE event types
     │   ├── lib/
     │   │   └── access.ts               # hasPermission(user, module, perm)
@@ -766,14 +778,24 @@ kirana_kart_final/
     │   │   ├── system/
     │   │   │   ├── SystemPage.tsx      # 5-tab system admin
     │   │   │   └── IntegrationsPanel.tsx  # Channel integrations UI
-    │   │   ├── cardinal/
-    │   │   │   ├── CardinalPage.tsx    # 5-tab Cardinal Intelligence page
+    │   │   ├── knowledge-base/
+    │   │   │   ├── KBPage.tsx          # 5-tab Knowledge Base page
     │   │   │   └── tabs/
-    │   │   │       ├── OverviewTab.tsx     # Pipeline stats + volume trend + distribution charts
-    │   │   │       ├── PhaseAnalysisTab.tsx # Per-LLM-stage pass/fail cards + error rate chart
-    │   │   │       ├── ExecutionTab.tsx    # Paginated execution table + slide-over trace drawer
-    │   │   │       ├── OperationsTab.tsx   # Audit log + reprocess ticket tool
-    │   │   │       └── SchedulersTab.tsx   # Beat schedule table — toggle, inline edit, Run Now
+    │   │   │       ├── DocumentsTab.tsx    # Upload + edit draft documents
+    │   │   │       ├── PipelineTab.tsx     # Guided 5-step compile → vectorize → publish workflow
+    │   │   │       ├── VersionsTab.tsx     # Published versions + rollback
+    │   │   │       ├── ActionCodesTab.tsx  # Action code viewer + LLM extractor
+    │   │   │       └── RulesTab.tsx        # Decision matrix — compiled rules per version
+    │   │   ├── cardinal/
+    │   │   │   ├── CardinalPage.tsx    # 7-tab Cardinal Intelligence page
+    │   │   │   └── tabs/
+    │   │   │       ├── OverviewTab.tsx       # Pipeline stats + volume trend + distribution charts
+    │   │   │       ├── PhaseAnalysisTab.tsx  # Per-LLM-stage pass/fail cards + error rate chart
+    │   │   │       ├── ExecutionTab.tsx      # Paginated execution table + slide-over trace drawer
+    │   │   │       ├── OperationsTab.tsx     # Audit log + reprocess ticket tool
+    │   │   │       ├── SchedulersTab.tsx     # Beat schedule table — toggle, inline edit, Run Now
+    │   │   │       ├── ActionRegistryTab.tsx # Full CRUD for master_action_codes (admin-only write)
+    │   │   │       └── TemplatesTab.tsx      # Full CRUD for response_templates with expandable variant rows
     │   │   ├── agents/
     │   │   │   └── QAAgentPage.tsx     # QA Agent — session sidebar, TicketListPanel, SSE evaluation viewer
     │   │   └── users/
@@ -830,4 +852,4 @@ OpenAI rate-limit issue. Reduce `PROCESS_BATCH_SIZE` in your `.env`.
 - [ ] For Outlook integrations: register an Azure AD app with `Mail.Read` delegated permissions and grant admin consent
 - [ ] Rotate any generated `kk_live_` API keys if they are ever exposed; deletion via the Integrations UI immediately revokes ingest access
 - [ ] Consider encrypting sensitive JSONB config fields (`access_token`, `refresh_token`, `password`) at the DB level for production deployments
-- [ ] Grant `cardinal.view` (and optionally `cardinal.admin` for reprocess + scheduler management) only to trusted operations team members — the module is default-deny for all new accounts by design
+- [ ] Grant `cardinal.view` (and optionally `cardinal.admin` for reprocess + scheduler management + action registry/templates write access) only to trusted operations team members — the module is default-deny for all new accounts by design

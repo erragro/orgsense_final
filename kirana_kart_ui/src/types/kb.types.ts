@@ -74,3 +74,48 @@ export interface VectorJob {
   completed_at: string | null
   error: string | null
 }
+
+export interface ActionCode {
+  id: number
+  action_key: string
+  action_code_id: string
+  action_name: string
+  action_description: string | null
+  requires_refund: boolean
+  requires_escalation: boolean
+  automation_eligible: boolean
+}
+
+export interface RuleEntry {
+  id: number
+  rule_id: string
+  policy_version: string
+  module_name: string
+  rule_type: string
+  priority: number
+  rule_scope: string | null
+  issue_type_l1: string | null
+  issue_type_l2: string | null
+  business_line: string | null
+  customer_segment: string | null
+  fraud_segment: string | null
+  min_order_value: number | null
+  max_order_value: number | null
+  min_repeat_count: number | null
+  max_repeat_count: number | null
+  sla_breach_required: boolean
+  evidence_required: boolean
+  conditions: Record<string, unknown>
+  action_id: number
+  action_code_id: string
+  action_name: string
+  action_payload: Record<string, unknown>
+  deterministic: boolean
+  overrideable: boolean
+}
+
+export interface ExtractActionsResult {
+  extracted: ActionCode[]
+  inserted_count: number
+  total_count: number
+}

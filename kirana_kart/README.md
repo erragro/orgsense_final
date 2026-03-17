@@ -16,7 +16,7 @@ The governance control plane is a **FastAPI backend** that manages the full life
 - **Ticket processing** — 5-phase ingest pipeline, 4-stage LLM resolution, Celery workers
 - **BI Agent** — Natural language SQL queries over the read-only `bi_readonly` role
 - **Channel Integrations** — Gmail, Outlook, SMTP/IMAP mailbox polling + API key management; emails auto-submitted as tickets into the Cardinal pipeline
-- **Cardinal Intelligence** — Read-only observability over the full Cardinal pipeline (phase stats, per-ticket LLM traces, audit log) + admin reprocess tool + Celery Beat scheduler management (enable/disable/trigger periodic tasks); access is default-deny for new users
+- **Cardinal Intelligence** — Full observability over the Cardinal pipeline (phase stats, per-ticket LLM traces, audit log) + admin reprocess tool + Celery Beat scheduler management (enable/disable/trigger periodic tasks) + full CRUD for **Action Registry** (`master_action_codes`) and **Response Templates** (`response_templates`); access is default-deny for new users
 - **QA Agent** — Hybrid quality-assurance evaluation engine: 12 deterministic Python checks (COPC, ISO 15838, Six Sigma, FinOps standards) + 10 LLM semantic parameters via gpt-4o, blended into a single score; results stream via SSE in real time
 - **Observability** — Prometheus metrics, structured JSON logging, correlation IDs
 
@@ -266,7 +266,8 @@ kirana_kart.knowledge_base_versions -- Published KB snapshots
 kirana_kart.kb_runtime_config       -- Active + shadow KB pointers
 kirana_kart.kb_vector_jobs          -- KB vectorization queue
 kirana_kart.rule_registry           -- Compiled structured rules
-kirana_kart.master_action_codes     -- Resolution action lookup
+kirana_kart.master_action_codes     -- Resolution action lookup (managed via Cardinal → Action Registry)
+kirana_kart.response_templates      -- Response template library (template_ref, action_code_id, issue_l1/l2, template_v1..v5)
 kirana_kart.policy_versions         -- Policy version metadata
 kirana_kart.policy_shadow_results   -- Shadow vs active comparison
 ```
@@ -399,12 +400,15 @@ Requires `knowledgeBase.*` permissions.
 | GET | `/kb/versions` | view | List published versions |
 | POST | `/kb/publish` | admin | Publish policy version |
 | POST | `/kb/rollback/{label}` | admin | Rollback to previous version |
+| GET | `/kb/rule-registry/{version_label}` | view | All compiled rules for a version (joined with action codes) |
 
 ### Compiler, Vectorization, Simulation
 
 | Method | Endpoint | Permission | Description |
 |---|---|---|---|
 | POST | `/compiler/compile/{label}` | knowledgeBase.admin | LLM compile raw → rules |
+| GET | `/compiler/action-codes` | knowledgeBase.view | List all master action codes |
+| POST | `/compiler/extract-actions` | knowledgeBase.admin | LLM-extract action codes from uploaded KB markdown |
 | POST | `/vectorization/run` | knowledgeBase.admin | Run pending vector jobs |
 | GET | `/vectorization/status/{label}` | knowledgeBase.view | Vector job status |
 | POST | `/simulation/run` | policy.admin | Compare two policy versions |
@@ -452,6 +456,14 @@ Access is **default-deny** — new users receive `can_view = false` and must be 
 | PATCH | `/cardinal/schedules/{task_key}` | admin | Update `enabled`, `interval_seconds`, or `cron_expression` |
 | POST | `/cardinal/schedules/{task_key}/trigger` | admin | Fire the task immediately via Celery `send_task` + update `last_triggered_at` |
 | POST | `/cardinal/schedules/{task_key}/reset` | admin | Restore original interval/cron + set `enabled = true` |
+| GET | `/cardinal/action-registry` | view | List all master action codes |
+| POST | `/cardinal/action-registry` | admin | Create a new action code |
+| PUT | `/cardinal/action-registry/{id}` | admin | Update an action code by id |
+| DELETE | `/cardinal/action-registry/{id}` | admin | Delete an action code by id |
+| GET | `/cardinal/templates` | view | List all response templates |
+| POST | `/cardinal/templates` | admin | Create a new response template |
+| PUT | `/cardinal/templates/{id}` | admin | Update a response template by id |
+| DELETE | `/cardinal/templates/{id}` | admin | Delete a response template by id |
 
 ### Channel Integrations (`/integrations`)
 
@@ -564,7 +576,7 @@ kirana_kart/
 │   │   │   ├── analytics.py      # /analytics/* endpoints
 │   │   │   ├── bi_agent.py       # /bi-agent/* endpoints + BI chat tables
 │   │   │   ├── integrations.py   # /integrations/* endpoints (CRUD + test + toggle + sync)
-│   │   │   ├── cardinal.py       # /cardinal/* endpoints (overview, phase-stats, executions, audit, reprocess, beat scheduler CRUD)
+│   │   │   ├── cardinal.py       # /cardinal/* endpoints (overview, phase-stats, executions, audit, reprocess, beat scheduler, action registry, templates CRUD)
 │   │   │   ├── qa_agent.py       # /qa-agent/* endpoints (sessions, ticket search, SSE evaluate)
 │   │   │   └── system.py         # /system/* endpoints
 │   │   └── services/

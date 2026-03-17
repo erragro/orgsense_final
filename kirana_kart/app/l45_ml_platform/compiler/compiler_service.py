@@ -510,3 +510,170 @@ Document:
         ).encode()
 
         return hashlib.sha256(encoded).hexdigest()
+
+
+    # --------------------------------------------------------
+    # PUBLIC: Extract Action Codes from Document
+    # --------------------------------------------------------
+
+    def extract_action_codes(self, version_label: str) -> dict:
+        """
+        LLM pass over the KB document to extract all possible policy decisions.
+        Upserts discovered action codes into master_action_codes (ON CONFLICT DO NOTHING).
+        Returns { extracted, inserted_count, total_count }
+        """
+
+        conn = self._get_connection()
+
+        try:
+
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+                cur.execute("""
+                    SELECT markdown_content
+                    FROM kirana_kart.knowledge_base_raw_uploads
+                    WHERE version_label = %s
+                    ORDER BY uploaded_at DESC
+                    LIMIT 1
+                """, (version_label,))
+
+                row = cur.fetchone()
+
+        finally:
+
+            conn.close()
+
+        if not row or not row.get("markdown_content"):
+            raise ValueError(
+                f"No document found for version '{version_label}'"
+            )
+
+        markdown = row["markdown_content"].strip()
+
+        if not markdown:
+            raise ValueError("Document content is empty")
+
+        extracted = self._call_extract_llm(markdown)
+
+        inserted_count = 0
+
+        conn2 = self._get_connection()
+
+        try:
+
+            with conn2.cursor() as cur:
+
+                for ac in extracted:
+
+                    cur.execute("""
+                        INSERT INTO kirana_kart.master_action_codes
+                            (action_key, action_code_id, action_name,
+                             action_description, requires_refund,
+                             requires_escalation, automation_eligible)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (action_code_id) DO NOTHING
+                    """, (
+                        ac["action_code_id"].lower().replace("_", "-"),
+                        ac["action_code_id"],
+                        ac["action_name"],
+                        ac.get("action_description"),
+                        bool(ac.get("requires_refund", False)),
+                        bool(ac.get("requires_escalation", False)),
+                        bool(ac.get("automation_eligible", False)),
+                    ))
+
+                    if cur.rowcount > 0:
+                        inserted_count += 1
+
+                conn2.commit()
+
+                cur.execute("""
+                    SELECT COUNT(*) FROM kirana_kart.master_action_codes
+                """)
+
+                total = cur.fetchone()[0]
+
+        except Exception:
+
+            conn2.rollback()
+            raise
+
+        finally:
+
+            conn2.close()
+
+        return {
+            "extracted": extracted,
+            "inserted_count": inserted_count,
+            "total_count": total,
+        }
+
+
+    # --------------------------------------------------------
+    # LLM CALL: Extract Action Codes
+    # --------------------------------------------------------
+
+    def _call_extract_llm(self, markdown: str) -> List[dict]:
+
+        prompt = f"""
+You are a policy analyst. Given the following policy document, enumerate every
+possible decision outcome that can result from evaluating a support ticket.
+
+For each outcome return:
+  action_code_id: SCREAMING_SNAKE_CASE identifier (e.g. REFUND_FULL, REJECT_FRAUD)
+  action_name: short human-readable label (max 5 words)
+  action_description: one sentence describing when this outcome applies
+  requires_refund: true if a monetary refund is issued
+  requires_escalation: true if human review is required
+  automation_eligible: true if this action can be taken fully automatically
+
+Return a JSON object with key "action_codes" containing an array of the above objects.
+Do NOT include any other keys.
+
+Document:
+\"\"\"
+{markdown}
+\"\"\"
+"""
+
+        response = client.chat.completions.create(
+
+            model="gpt-4.1",
+            temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": "Return strict JSON only."},
+                {"role": "user", "content": prompt}
+            ]
+
+        )
+
+        content = response.choices[0].message.content
+
+        logger.info("Extract LLM response received")
+
+        try:
+
+            parsed = json.loads(content)
+
+        except Exception:
+
+            logger.error("Extract LLM returned invalid JSON")
+            logger.error(content)
+            raise
+
+        action_codes = parsed.get("action_codes", [])
+
+        if not isinstance(action_codes, list):
+            raise ValueError("LLM did not return action_codes array")
+
+        required_fields = {"action_code_id", "action_name"}
+
+        for ac in action_codes:
+
+            missing = required_fields - set(ac.keys())
+
+            if missing:
+                raise ValueError(f"Action code missing fields: {missing}")
+
+        return action_codes

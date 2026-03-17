@@ -1,5 +1,5 @@
 import { governanceClient } from '../clients'
-import type { KBRawUpload, KBVersion, KBActiveVersion, KBUploadPayload } from '@/types/kb.types'
+import type { KBRawUpload, KBVersion, KBActiveVersion, KBUploadPayload, RuleEntry } from '@/types/kb.types'
 
 export const kbApi = {
   upload: (payload: KBUploadPayload) =>
@@ -31,4 +31,7 @@ export const kbApi = {
 
   getUploads: () =>
     governanceClient.get<KBRawUpload[]>('/kb/uploads'),
+
+  getRules: (version_label: string) =>
+    governanceClient.get<RuleEntry[]>(`/kb/rule-registry/${version_label}`),
 }

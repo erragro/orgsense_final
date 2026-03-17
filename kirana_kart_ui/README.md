@@ -104,7 +104,7 @@ interface User {
 | `system` | System health · vector jobs · audit logs · model registry · **channel integrations** | ✅ view granted |
 | `biAgent` | Natural language SQL | ✅ view granted |
 | `sandbox` | Testing tools | ✅ view granted |
-| `cardinal` | **Pipeline observability & schedulers** — 5-phase stats, LLM execution traces, audit log, reprocess tool, beat schedule management | ❌ **denied** — super-admin must grant |
+| `cardinal` | **Pipeline observability, schedulers & registry CRUD** — 7-tab module: 5-phase stats, LLM execution traces, audit log, reprocess tool, beat schedule management, Action Registry (full CRUD for `master_action_codes`), Response Templates (full CRUD for `response_templates`) | ❌ **denied** — super-admin must grant |
 | `qaAgent` | **QA Agent** — hybrid Python + LLM quality-assurance evaluations with SSE streaming | ✅ view granted |
 
 ### Checking Permissions in Components
@@ -149,7 +149,9 @@ kirana_kart_ui/
 │   │   │   ├── customers.api.ts
 │   │   │   ├── analytics.api.ts
 │   │   │   ├── integrations.api.ts   # channel integrations CRUD + test + sync
-│   │   │   ├── cardinal.api.ts       # cardinal pipeline observability + reprocess + schedule CRUD
+│   │   │   ├── cardinal.api.ts       # cardinal pipeline + schedule + action registry + templates CRUD
+│   │   │   ├── kb.api.ts             # KB upload, versions, publish, rollback, rule registry
+│   │   │   ├── compiler.api.ts       # compile, action-code list, extract-actions
 │   │   │   ├── qa.api.ts             # QA Agent — sessions, ticket search, SSE evaluate, get evaluation
 │   │   │   └── bi.api.ts
 │   │   └── ingest/
@@ -175,7 +177,14 @@ kirana_kart_ui/
 │   │   ├── dashboard/
 │   │   ├── tickets/
 │   │   ├── taxonomy/
-│   │   ├── knowledgeBase/
+│   │   ├── knowledge-base/
+│   │   │   ├── KBPage.tsx            # 5-tab Knowledge Base page
+│   │   │   └── tabs/
+│   │   │       ├── DocumentsTab.tsx      # Upload + edit draft documents
+│   │   │       ├── PipelineTab.tsx       # Guided 5-step compile → vectorize → publish workflow
+│   │   │       ├── VersionsTab.tsx       # Published versions + rollback
+│   │   │       ├── ActionCodesTab.tsx    # Action code viewer + LLM extractor
+│   │   │       └── RulesTab.tsx          # Decision matrix — compiled rules per version
 │   │   ├── customers/
 │   │   ├── analytics/
 │   │   ├── bi/
@@ -183,13 +192,15 @@ kirana_kart_ui/
 │   │   │   ├── SystemPage.tsx        # 5-tab admin: Health · Vector Jobs · Audit · Models · Integrations
 │   │   │   └── IntegrationsPanel.tsx # Channel integrations UI (see below)
 │   │   ├── cardinal/
-│   │   │   ├── CardinalPage.tsx      # 5-tab page (Pipeline Overview · Phase Analysis · LLM Execution · Operations · Schedulers)
+│   │   │   ├── CardinalPage.tsx      # 7-tab page (Pipeline Overview · Phase Analysis · LLM Execution · Operations · Schedulers · Action Registry · Templates)
 │   │   │   └── tabs/
 │   │   │       ├── OverviewTab.tsx       # StatCards + TrendLineChart + PieDonutCharts (30s auto-refresh)
 │   │   │       ├── PhaseAnalysisTab.tsx  # Per-LLM-stage cards + BarMetricChart error rate comparison
 │   │   │       ├── ExecutionTab.tsx      # Paginated table + slide-over trace drawer (all 4 LLM stages)
 │   │   │       ├── OperationsTab.tsx     # Audit log (30s refresh) + reprocess ticket tool (admin-only)
-│   │   │       └── SchedulersTab.tsx     # Beat schedule table — ON/OFF toggle, inline edit, Run Now
+│   │   │       ├── SchedulersTab.tsx     # Beat schedule table — ON/OFF toggle, inline edit, Run Now
+│   │   │       ├── ActionRegistryTab.tsx # Full CRUD for master_action_codes (view all, write requires admin)
+│   │   │       └── TemplatesTab.tsx      # Full CRUD for response_templates with expandable variant rows
 │   │   ├── agents/
 │   │   │   └── QAAgentPage.tsx       # QA Agent — session sidebar, TicketListPanel (auto-loads 30 tickets),
 │   │   │                             #   SSE evaluation viewer (Python check cards + LLM parameter cards)
@@ -205,7 +216,8 @@ kirana_kart_ui/
 │   └── types/
 │       ├── auth.types.ts             # Re-exports from auth.store
 │       ├── integration.types.ts      # Integration, IntegrationType, SyncStatus
-│       ├── cardinal.types.ts         # CardinalOverview, PhaseStats, ExecutionSummary, ExecutionDetail, BeatSchedule, ScheduleUpdate, TriggerResult
+│       ├── cardinal.types.ts         # CardinalOverview, PhaseStats, ExecutionSummary, ExecutionDetail, BeatSchedule, ActionCodeEntry, ActionCodePayload, ResponseTemplate, TemplatePayload
+│       ├── kb.types.ts               # KBUpload, KBVersion, ActionCode, RuleEntry, ExtractActionsResult
 │       └── qa.types.ts               # QASession, QAEvaluation, QATicketResult, QAPythonFinding, SSE event types
 │
 ├── index.html
@@ -296,7 +308,7 @@ Features:
 
 ### `src/pages/cardinal/CardinalPage.tsx` + `tabs/`
 
-Cardinal Intelligence page (requires `cardinal.view` — default-deny for new users). Five tabs:
+Cardinal Intelligence page (requires `cardinal.view` — default-deny for new users). Seven tabs:
 
 | Tab | Component | Description |
 |---|---|---|
@@ -305,6 +317,8 @@ Cardinal Intelligence page (requires `cardinal.view` — default-deny for new us
 | LLM Execution | `ExecutionTab.tsx` | Searchable, filterable paginated table of all ticket executions. Clicking a row opens a slide-over **trace drawer** showing the full 4-stage LLM chain outputs (llm_output_1/2/3 + summary), processing metrics, and audit events. |
 | Operations | `OperationsTab.tsx` | Recent audit log table (auto-refreshes 30s). Reprocess Ticket input (admin-only, requires `cardinal.admin`) — 2-step confirmation before calling `POST /cardinal/reprocess/{ticket_id}`. |
 | Schedulers | `SchedulersTab.tsx` | Table of all 5 Celery Beat periodic tasks. Columns: task name/description, schedule (inline-editable), ON/OFF toggle pill (optimistic update), last triggered timestamp, Run Now button. Toggle takes effect on next beat tick; interval edits show ⚠ restart required badge. All write actions require `cardinal.admin`. |
+| Action Registry | `ActionRegistryTab.tsx` | Full CRUD table for `master_action_codes`. Columns: Code ID (monospace), Name, Description (truncated), FD Status, Refund/Escalate/Auto boolean icons. Add/Edit form has Switch toggles for boolean flags; Code ID is locked in edit mode. Delete shows ConfirmDialog warning about broken references. Write actions require `cardinal.admin`. |
+| Templates | `TemplatesTab.tsx` | Full CRUD table for `response_templates`. Columns: template_ref, action_code_id badge, issue_l1/l2, variant count badge. Rows expand inline to show up to 5 variant text blocks. Add/Edit form includes action_code_id Select (loaded from action registry), issue_l1/l2 inputs, and 5 Textarea variant slots. Write actions require `cardinal.admin`. |
 
 ### `src/pages/users/UserManagementPage.tsx`
 

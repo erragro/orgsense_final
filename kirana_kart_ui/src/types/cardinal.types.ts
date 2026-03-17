@@ -159,3 +159,60 @@ export interface TriggerResult {
   task_key: string
   message: string
 }
+
+// ── Action Registry types ─────────────────────────────────────────────────────
+
+export interface ActionCodeEntry {
+  id: number
+  action_key: string
+  action_code_id: string
+  action_name: string
+  action_description: string | null
+  freshdesk_status: number | null
+  freshdesk_status_name: string | null
+  requires_refund: boolean
+  requires_escalation: boolean
+  automation_eligible: boolean
+  created_at: string
+}
+
+export interface ActionCodePayload {
+  action_key: string
+  action_code_id: string
+  action_name: string
+  action_description?: string | null
+  freshdesk_status?: number | null
+  freshdesk_status_name?: string | null
+  requires_refund?: boolean
+  requires_escalation?: boolean
+  automation_eligible?: boolean
+}
+
+// ── Response Template types ───────────────────────────────────────────────────
+
+export interface ResponseTemplate {
+  id: number
+  template_ref: string
+  action_code_id: string | null
+  issue_l1: string | null
+  issue_l2: string | null
+  template_v1: string | null
+  template_v2: string | null
+  template_v3: string | null
+  template_v4: string | null
+  template_v5: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface TemplatePayload {
+  template_ref: string
+  action_code_id?: string | null
+  issue_l1?: string | null
+  issue_l2?: string | null
+  template_v1?: string | null
+  template_v2?: string | null
+  template_v3?: string | null
+  template_v4?: string | null
+  template_v5?: string | null
+}

@@ -367,3 +367,57 @@ def list_raw_uploads(_u: UserContext = Depends(_kb_view)):
     except Exception as e:
         logger.exception("Uploads list failed")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ------------------------------------------------------------
+# Rule Registry — Decision Matrix
+# ------------------------------------------------------------
+
+@router.get("/rule-registry/{version_label}")
+def get_rule_registry(version_label: str, _u: UserContext = Depends(_kb_view)):
+    """
+    Returns all compiled rules for a policy version joined with action code info.
+    Used by the Decision Matrix tab.
+    """
+    try:
+
+        with engine.connect() as conn:
+
+            rows = conn.execute(text("""
+                SELECT
+                    r.id,
+                    r.rule_id,
+                    r.policy_version,
+                    r.module_name,
+                    r.rule_type,
+                    r.priority,
+                    r.rule_scope,
+                    r.issue_type_l1,
+                    r.issue_type_l2,
+                    r.business_line,
+                    r.customer_segment,
+                    r.fraud_segment,
+                    r.min_order_value,
+                    r.max_order_value,
+                    r.min_repeat_count,
+                    r.max_repeat_count,
+                    r.sla_breach_required,
+                    r.evidence_required,
+                    r.conditions,
+                    r.action_id,
+                    r.action_payload,
+                    r.deterministic,
+                    r.overrideable,
+                    mac.action_code_id,
+                    mac.action_name
+                FROM kirana_kart.rule_registry r
+                JOIN kirana_kart.master_action_codes mac ON mac.id = r.action_id
+                WHERE r.policy_version = :version
+                ORDER BY r.module_name, r.priority
+            """), {"version": version_label}).mappings().all()
+
+        return jsonable_encoder([dict(r) for r in rows])
+
+    except Exception as e:
+        logger.exception("Rule registry fetch failed")
+        raise HTTPException(status_code=500, detail=str(e))

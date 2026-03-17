@@ -16,6 +16,7 @@ Delegates to CompilerService.
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Dict
+from pydantic import BaseModel
 
 from app.admin.routes.auth import UserContext, require_permission
 from .compiler_service import CompilerService
@@ -35,7 +36,12 @@ logger.setLevel(logging.INFO)
 
 compiler_service = CompilerService()
 
+_view  = require_permission("knowledgeBase", "view")
 _admin = require_permission("knowledgeBase", "admin")
+
+
+class ExtractActionsRequest(BaseModel):
+    version_label: str
 
 
 # ============================================================
@@ -128,3 +134,64 @@ def compilation_status(version_label: str, _u: UserContext = Depends(_admin)):
     finally:
         if conn:
             conn.close()
+
+
+# ============================================================
+# LIST ACTION CODES
+# ============================================================
+
+@router.get("/action-codes")
+def list_action_codes(_u: UserContext = Depends(_view)):
+    """
+    Returns all master_action_codes rows.
+    """
+    conn = None
+    try:
+        conn = compiler_service._get_connection()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, action_key, action_code_id, action_name, action_description,
+                       requires_refund, requires_escalation, automation_eligible
+                FROM kirana_kart.master_action_codes
+                ORDER BY id
+            """)
+            rows = cur.fetchall()
+        return [
+            {
+                "id": r[0],
+                "action_key": r[1],
+                "action_code_id": r[2],
+                "action_name": r[3],
+                "action_description": r[4],
+                "requires_refund": r[5],
+                "requires_escalation": r[6],
+                "automation_eligible": r[7],
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        logger.error(f"Action codes list failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+# ============================================================
+# EXTRACT ACTION CODES FROM DOCUMENT
+# ============================================================
+
+@router.post("/extract-actions")
+def extract_action_codes(body: ExtractActionsRequest, _u: UserContext = Depends(_admin)):
+    """
+    LLM pass over the KB document to extract all possible policy decisions.
+    Upserts discovered action codes into master_action_codes.
+    """
+    try:
+        result = compiler_service.extract_action_codes(body.version_label)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Extract actions failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
