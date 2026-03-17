@@ -239,7 +239,9 @@
       "Bash(docker compose down)",
       "Bash(docker compose up -d --build)",
       "Bash(docker compose up -d --build governance)",
-      "Bash(docker compose up -d --build ui)"
+      "Bash(docker compose up -d --build ui)",
+      "Bash(open -a Docker)",
+      "Bash(docker info)"
     ]
   }
 }
