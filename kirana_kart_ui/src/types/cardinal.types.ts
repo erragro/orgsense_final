@@ -128,3 +128,34 @@ export interface ReprocessResult {
   execution_id: string | null
   message: string
 }
+
+// ── Beat Schedule types ──────────────────────────────────────────────────────
+
+export type ScheduleType = 'interval' | 'crontab'
+
+export interface BeatSchedule {
+  id: number
+  task_key: string
+  task_name: string
+  display_name: string
+  description: string | null
+  schedule_type: ScheduleType
+  interval_seconds: number | null
+  cron_expression: string | null
+  enabled: boolean
+  last_triggered_at: string | null
+  updated_at: string
+  updated_by: string | null
+}
+
+export interface ScheduleUpdate {
+  enabled?: boolean
+  interval_seconds?: number
+  cron_expression?: string
+}
+
+export interface TriggerResult {
+  status: string
+  task_key: string
+  message: string
+}

@@ -5,7 +5,7 @@
 
 import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -13,11 +13,9 @@ import { StatusPill } from '@/components/common/StatusPill'
 import { JsonViewer } from '@/components/common/JsonViewer'
 import { CopyButton } from '@/components/common/CopyButton'
 import { Skeleton } from '@/components/ui/Skeleton'
-import { Button } from '@/components/ui/Button'
 import { ticketsApi } from '@/api/governance/tickets.api'
 import { formatDate } from '@/lib/dates'
 import { formatCurrency, formatDuration, formatPercent } from '@/lib/utils'
-import { toast } from '@/stores/toast.store'
 import { cn } from '@/lib/cn'
 import {
   ChevronDown, ChevronRight, ArrowLeft,
@@ -115,18 +113,6 @@ export default function TicketDetailPage() {
     },
   })
 
-  const dispatchMutation = useMutation({
-    mutationFn: () => ticketsApi.dispatch({ ticket_ids: [id] }).then((r) => r.data),
-    onSuccess: () => {
-      toast.success('Ticket queued', `Ticket #${id} dispatched`)
-      refetch()
-    },
-    onError: (err: unknown) => {
-      const e = err as { response?: { data?: { detail?: string } } }
-      toast.error('Dispatch failed', e.response?.data?.detail ?? 'Unable to queue ticket')
-    },
-  })
-
   if (isLoading) {
     return (
       <div className="space-y-4">
@@ -154,7 +140,6 @@ export default function TicketDetailPage() {
 
   const isComplete  = ticket.pipeline_stage === 'COMPLETED'
   const isFailed    = ticket.pipeline_stage === 'FAILED'
-  const isSandbox   = (ticket.canonical_payload as Record<string, unknown> | null)?.is_sandbox === true
 
   return (
     <div>
@@ -169,16 +154,6 @@ export default function TicketDetailPage() {
         subtitle={ticket.subject ?? 'No subject'}
         actions={
           <div className="flex items-center gap-2">
-            {!isSandbox && (
-              <Button
-                size="sm"
-                variant="outline"
-                loading={dispatchMutation.isPending}
-                onClick={() => dispatchMutation.mutate()}
-              >
-                Run Pipeline
-              </Button>
-            )}
             {ticket.module && <Badge variant="blue">{ticket.module}</Badge>}
             <StatusPill status={ticket.pipeline_stage} />
           </div>

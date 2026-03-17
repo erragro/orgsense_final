@@ -104,7 +104,8 @@ interface User {
 | `system` | System health · vector jobs · audit logs · model registry · **channel integrations** | ✅ view granted |
 | `biAgent` | Natural language SQL | ✅ view granted |
 | `sandbox` | Testing tools | ✅ view granted |
-| `cardinal` | **Pipeline observability** — 5-phase stats, LLM execution traces, audit log, reprocess tool | ❌ **denied** — super-admin must grant |
+| `cardinal` | **Pipeline observability & schedulers** — 5-phase stats, LLM execution traces, audit log, reprocess tool, beat schedule management | ❌ **denied** — super-admin must grant |
+| `qaAgent` | **QA Agent** — hybrid Python + LLM quality-assurance evaluations with SSE streaming | ✅ view granted |
 
 ### Checking Permissions in Components
 
@@ -148,7 +149,8 @@ kirana_kart_ui/
 │   │   │   ├── customers.api.ts
 │   │   │   ├── analytics.api.ts
 │   │   │   ├── integrations.api.ts   # channel integrations CRUD + test + sync
-│   │   │   ├── cardinal.api.ts       # cardinal pipeline observability + reprocess
+│   │   │   ├── cardinal.api.ts       # cardinal pipeline observability + reprocess + schedule CRUD
+│   │   │   ├── qa.api.ts             # QA Agent — sessions, ticket search, SSE evaluate, get evaluation
 │   │   │   └── bi.api.ts
 │   │   └── ingest/
 │   │       └── ingest.api.ts
@@ -181,12 +183,16 @@ kirana_kart_ui/
 │   │   │   ├── SystemPage.tsx        # 5-tab admin: Health · Vector Jobs · Audit · Models · Integrations
 │   │   │   └── IntegrationsPanel.tsx # Channel integrations UI (see below)
 │   │   ├── cardinal/
-│   │   │   ├── CardinalPage.tsx      # 4-tab page (Pipeline Overview · Phase Analysis · LLM Execution · Operations)
+│   │   │   ├── CardinalPage.tsx      # 5-tab page (Pipeline Overview · Phase Analysis · LLM Execution · Operations · Schedulers)
 │   │   │   └── tabs/
 │   │   │       ├── OverviewTab.tsx       # StatCards + TrendLineChart + PieDonutCharts (30s auto-refresh)
 │   │   │       ├── PhaseAnalysisTab.tsx  # Per-LLM-stage cards + BarMetricChart error rate comparison
 │   │   │       ├── ExecutionTab.tsx      # Paginated table + slide-over trace drawer (all 4 LLM stages)
-│   │   │       └── OperationsTab.tsx     # Audit log (30s refresh) + reprocess ticket tool (admin-only)
+│   │   │       ├── OperationsTab.tsx     # Audit log (30s refresh) + reprocess ticket tool (admin-only)
+│   │   │       └── SchedulersTab.tsx     # Beat schedule table — ON/OFF toggle, inline edit, Run Now
+│   │   ├── agents/
+│   │   │   └── QAAgentPage.tsx       # QA Agent — session sidebar, TicketListPanel (auto-loads 30 tickets),
+│   │   │                             #   SSE evaluation viewer (Python check cards + LLM parameter cards)
 │   │   └── users/
 │   │       └── UserManagementPage.tsx # User table + per-module permission editor
 │   │
@@ -199,7 +205,8 @@ kirana_kart_ui/
 │   └── types/
 │       ├── auth.types.ts             # Re-exports from auth.store
 │       ├── integration.types.ts      # Integration, IntegrationType, SyncStatus
-│       └── cardinal.types.ts         # CardinalOverview, PhaseStats, ExecutionSummary, ExecutionDetail, etc.
+│       ├── cardinal.types.ts         # CardinalOverview, PhaseStats, ExecutionSummary, ExecutionDetail, BeatSchedule, ScheduleUpdate, TriggerResult
+│       └── qa.types.ts               # QASession, QAEvaluation, QATicketResult, QAPythonFinding, SSE event types
 │
 ├── index.html
 ├── vite.config.ts                    # Vite config (uses process.env.PORT)
@@ -238,7 +245,7 @@ Axios request interceptor injects `Authorization: Bearer <token>`. Response inte
 
 ```typescript
 export type AppModule = 'dashboard' | 'tickets' | 'taxonomy' | 'knowledgeBase' |
-  'policy' | 'customers' | 'analytics' | 'system' | 'biAgent' | 'sandbox' | 'cardinal'
+  'policy' | 'customers' | 'analytics' | 'system' | 'biAgent' | 'sandbox' | 'cardinal' | 'qaAgent'
 export type Permission = 'view' | 'edit' | 'admin'
 
 export function hasPermission(user: User | null, module: AppModule, perm: Permission): boolean
@@ -260,6 +267,7 @@ export function canView(user: User | null, module: AppModule): boolean
 /kb             → protect(KBPage, 'knowledgeBase', 'view')
 /cardinal       → protect(CardinalPage, 'cardinal')          // default-deny
 /cardinal/*     → protect(CardinalPage, 'cardinal')
+/qa-agent       → protect(QAAgentPage, 'qaAgent', 'view')    // view granted to all new users
 /users          → protect(UserManagementPage, 'system', 'admin')
 // etc.
 ```
@@ -288,7 +296,7 @@ Features:
 
 ### `src/pages/cardinal/CardinalPage.tsx` + `tabs/`
 
-Cardinal Intelligence page (requires `cardinal.view` — default-deny for new users). Four tabs:
+Cardinal Intelligence page (requires `cardinal.view` — default-deny for new users). Five tabs:
 
 | Tab | Component | Description |
 |---|---|---|
@@ -296,6 +304,7 @@ Cardinal Intelligence page (requires `cardinal.view` — default-deny for new us
 | Phase Analysis | `PhaseAnalysisTab.tsx` | One card per LLM stage (Classification → Evaluation → Validation → Dispatch) showing processed/passed/failed counts, success rate badge, avg latency, and top error messages (expandable). BarMetricChart compares error rates across all stages. |
 | LLM Execution | `ExecutionTab.tsx` | Searchable, filterable paginated table of all ticket executions. Clicking a row opens a slide-over **trace drawer** showing the full 4-stage LLM chain outputs (llm_output_1/2/3 + summary), processing metrics, and audit events. |
 | Operations | `OperationsTab.tsx` | Recent audit log table (auto-refreshes 30s). Reprocess Ticket input (admin-only, requires `cardinal.admin`) — 2-step confirmation before calling `POST /cardinal/reprocess/{ticket_id}`. |
+| Schedulers | `SchedulersTab.tsx` | Table of all 5 Celery Beat periodic tasks. Columns: task name/description, schedule (inline-editable), ON/OFF toggle pill (optimistic update), last triggered timestamp, Run Now button. Toggle takes effect on next beat tick; interval edits show ⚠ restart required badge. All write actions require `cardinal.admin`. |
 
 ### `src/pages/users/UserManagementPage.tsx`
 

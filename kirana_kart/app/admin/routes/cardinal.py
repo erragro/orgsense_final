@@ -29,10 +29,12 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import text
 
-from app.admin.db import get_db_session
+from app.admin.db import get_db_session, engine
 from app.admin.routes.auth import UserContext, require_permission
+from app.config import settings
 
 logger = logging.getLogger("kirana_kart.cardinal")
 
@@ -659,3 +661,272 @@ def cardinal_reprocess(
     except Exception as exc:
         logger.error("Reprocess error for ticket %s: %s", ticket_id, exc)
         raise HTTPException(status_code=502, detail=f"Failed to reach ingest API: {exc}")
+
+
+# ============================================================
+# BEAT SCHEDULE TABLE SETUP
+# ============================================================
+
+_SCHEDULE_DEFAULTS = [
+    {
+        "task_key":        "poll-streams-every-5s",
+        "task_name":       "app.l4_agents.tasks.beat_poll_streams",
+        "display_name":    "Stream Poll",
+        "description":     "Read from all 4 priority Redis streams and dispatch Celery tasks. Runs every 5 seconds.",
+        "schedule_type":   "interval",
+        "interval_seconds": 5,
+        "cron_expression": None,
+    },
+    {
+        "task_key":        "reclaim-idle-every-60s",
+        "task_name":       "app.l4_agents.tasks.beat_reclaim_idle_messages",
+        "display_name":    "Idle Message Reclaim",
+        "description":     "Reclaim Redis stream messages that were delivered to crashed workers. Runs every 60 seconds.",
+        "schedule_type":   "interval",
+        "interval_seconds": 60,
+        "cron_expression": None,
+    },
+    {
+        "task_key":        "refresh-risk-profiles-hourly",
+        "task_name":       "app.l4_agents.tasks.beat_refresh_risk_profiles",
+        "display_name":    "Risk Profile Refresh",
+        "description":     "Recompute stale customer risk profiles from orders and complaints data. Runs hourly.",
+        "schedule_type":   "crontab",
+        "interval_seconds": None,
+        "cron_expression": "0 * * * *",
+    },
+    {
+        "task_key":        "timeout-stuck-executions-every-10m",
+        "task_name":       "app.l4_agents.tasks.beat_execution_plan_timeout",
+        "display_name":    "Execution Timeout Check",
+        "description":     "Mark cardinal_execution_plans stuck in 'processing' beyond the timeout threshold as 'failed'. Runs every 10 minutes.",
+        "schedule_type":   "interval",
+        "interval_seconds": 600,
+        "cron_expression": None,
+    },
+    {
+        "task_key":        "purge-stale-dedup-keys-daily",
+        "task_name":       "app.l4_agents.tasks.beat_purge_stale_dedup_keys",
+        "display_name":    "Dedup Key Purge",
+        "description":     "Delete deduplication_log rows older than 30 days to keep the table lean. Runs daily at 02:00 UTC.",
+        "schedule_type":   "crontab",
+        "interval_seconds": None,
+        "cron_expression": "0 2 * * *",
+    },
+]
+
+
+def ensure_schedule_table() -> None:
+    """Create and seed the cardinal_beat_schedule table if it doesn't exist."""
+    ddl = """
+    CREATE TABLE IF NOT EXISTS kirana_kart.cardinal_beat_schedule (
+        id                SERIAL PRIMARY KEY,
+        task_key          VARCHAR(100) UNIQUE NOT NULL,
+        task_name         VARCHAR(200) NOT NULL,
+        display_name      VARCHAR(200) NOT NULL,
+        description       TEXT,
+        schedule_type     VARCHAR(20) NOT NULL DEFAULT 'interval',
+        interval_seconds  INTEGER,
+        cron_expression   VARCHAR(100),
+        enabled           BOOLEAN NOT NULL DEFAULT true,
+        last_triggered_at TIMESTAMPTZ,
+        updated_at        TIMESTAMPTZ DEFAULT NOW(),
+        updated_by        VARCHAR(200)
+    );
+    """
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(ddl))
+            for row in _SCHEDULE_DEFAULTS:
+                conn.execute(
+                    text("""
+                        INSERT INTO kirana_kart.cardinal_beat_schedule
+                            (task_key, task_name, display_name, description,
+                             schedule_type, interval_seconds, cron_expression, enabled)
+                        VALUES
+                            (:task_key, :task_name, :display_name, :description,
+                             :schedule_type, :interval_seconds, :cron_expression, true)
+                        ON CONFLICT (task_key) DO NOTHING
+                    """),
+                    row,
+                )
+            conn.commit()
+        logger.info("cardinal_beat_schedule table ensured with %d default rows.", len(_SCHEDULE_DEFAULTS))
+    except Exception as exc:
+        logger.error("Failed to ensure cardinal_beat_schedule: %s", exc)
+
+
+# ============================================================
+# SCHEDULER REQUEST MODELS
+# ============================================================
+
+class ScheduleUpdateRequest(BaseModel):
+    enabled: Optional[bool] = None
+    interval_seconds: Optional[int] = None
+    cron_expression: Optional[str] = None
+
+
+# Celery trigger app (governance sends tasks to the shared Redis broker)
+_TASK_MAP = {
+    "poll-streams-every-5s":              "app.l4_agents.tasks.beat_poll_streams",
+    "reclaim-idle-every-60s":             "app.l4_agents.tasks.beat_reclaim_idle_messages",
+    "refresh-risk-profiles-hourly":       "app.l4_agents.tasks.beat_refresh_risk_profiles",
+    "timeout-stuck-executions-every-10m": "app.l4_agents.tasks.beat_execution_plan_timeout",
+    "purge-stale-dedup-keys-daily":       "app.l4_agents.tasks.beat_purge_stale_dedup_keys",
+}
+
+_DEFAULT_INTERVALS = {
+    "poll-streams-every-5s":              {"interval_seconds": 5,   "cron_expression": None},
+    "reclaim-idle-every-60s":             {"interval_seconds": 60,  "cron_expression": None},
+    "refresh-risk-profiles-hourly":       {"interval_seconds": None, "cron_expression": "0 * * * *"},
+    "timeout-stuck-executions-every-10m": {"interval_seconds": 600, "cron_expression": None},
+    "purge-stale-dedup-keys-daily":       {"interval_seconds": None, "cron_expression": "0 2 * * *"},
+}
+
+
+# ============================================================
+# GET /cardinal/schedules
+# ============================================================
+
+@router.get("/schedules")
+def list_schedules(user: UserContext = Depends(_view)):
+    """List all beat schedule configs."""
+    with get_db_session() as session:
+        rows = session.execute(
+            text("""
+                SELECT id, task_key, task_name, display_name, description,
+                       schedule_type, interval_seconds, cron_expression,
+                       enabled, last_triggered_at, updated_at, updated_by
+                FROM kirana_kart.cardinal_beat_schedule
+                ORDER BY id
+            """)
+        ).mappings().all()
+    return [_serialize_row(r) for r in rows]
+
+
+# ============================================================
+# PATCH /cardinal/schedules/{task_key}
+# ============================================================
+
+@router.patch("/schedules/{task_key}")
+def update_schedule(
+    task_key: str,
+    body: ScheduleUpdateRequest,
+    user: UserContext = Depends(_admin),
+):
+    """Update a beat schedule's enabled flag or interval. Interval changes apply on next scheduler restart."""
+    if task_key not in _TASK_MAP:
+        raise HTTPException(status_code=404, detail=f"Unknown task_key: {task_key}")
+
+    updates: dict[str, Any] = {"updated_at": "NOW()", "updated_by": str(user.email or user.id)}
+    set_parts = ["updated_at = NOW()", "updated_by = :updated_by"]
+    params: dict[str, Any] = {"task_key": task_key, "updated_by": str(user.email or user.id)}
+
+    if body.enabled is not None:
+        set_parts.append("enabled = :enabled")
+        params["enabled"] = body.enabled
+    if body.interval_seconds is not None:
+        set_parts.append("interval_seconds = :interval_seconds")
+        params["interval_seconds"] = body.interval_seconds
+    if body.cron_expression is not None:
+        set_parts.append("cron_expression = :cron_expression")
+        params["cron_expression"] = body.cron_expression
+
+    with get_db_session() as session:
+        row = session.execute(
+            text(f"""
+                UPDATE kirana_kart.cardinal_beat_schedule
+                SET {", ".join(set_parts)}
+                WHERE task_key = :task_key
+                RETURNING id, task_key, task_name, display_name, description,
+                          schedule_type, interval_seconds, cron_expression,
+                          enabled, last_triggered_at, updated_at, updated_by
+            """),
+            params,
+        ).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Schedule row not found for: {task_key}")
+    return _serialize_row(row)
+
+
+# ============================================================
+# POST /cardinal/schedules/{task_key}/trigger
+# ============================================================
+
+@router.post("/schedules/{task_key}/trigger")
+def trigger_schedule(
+    task_key: str,
+    user: UserContext = Depends(_admin),
+):
+    """Manually fire a beat task immediately via Celery send_task."""
+    if task_key not in _TASK_MAP:
+        raise HTTPException(status_code=404, detail=f"Unknown task_key: {task_key}")
+
+    task_name = _TASK_MAP[task_key]
+    try:
+        from celery import Celery as _Celery
+        _trigger_app = _Celery(broker=settings.celery_broker_url)
+        _trigger_app.send_task(task_name)
+        logger.info("Manual trigger: %s by user %s", task_key, user.id)
+    except Exception as exc:
+        logger.error("Failed to trigger task %s: %s", task_key, exc)
+        raise HTTPException(status_code=502, detail=f"Failed to dispatch task: {exc}")
+
+    # Update last_triggered_at
+    with get_db_session() as session:
+        session.execute(
+            text("""
+                UPDATE kirana_kart.cardinal_beat_schedule
+                SET last_triggered_at = NOW()
+                WHERE task_key = :task_key
+            """),
+            {"task_key": task_key},
+        )
+
+    return {
+        "status":   "triggered",
+        "task_key": task_key,
+        "message":  f"Task '{task_key}' dispatched to Celery workers.",
+    }
+
+
+# ============================================================
+# POST /cardinal/schedules/{task_key}/reset
+# ============================================================
+
+@router.post("/schedules/{task_key}/reset")
+def reset_schedule(
+    task_key: str,
+    user: UserContext = Depends(_admin),
+):
+    """Reset a schedule to its default interval and re-enable it."""
+    if task_key not in _TASK_MAP:
+        raise HTTPException(status_code=404, detail=f"Unknown task_key: {task_key}")
+
+    defaults = _DEFAULT_INTERVALS[task_key]
+    with get_db_session() as session:
+        row = session.execute(
+            text("""
+                UPDATE kirana_kart.cardinal_beat_schedule
+                SET enabled = true,
+                    interval_seconds = :interval_seconds,
+                    cron_expression  = :cron_expression,
+                    updated_at       = NOW(),
+                    updated_by       = :updated_by
+                WHERE task_key = :task_key
+                RETURNING id, task_key, task_name, display_name, description,
+                          schedule_type, interval_seconds, cron_expression,
+                          enabled, last_triggered_at, updated_at, updated_by
+            """),
+            {
+                "task_key":        task_key,
+                "interval_seconds": defaults["interval_seconds"],
+                "cron_expression":  defaults["cron_expression"],
+                "updated_by":       str(user.email or user.id),
+            },
+        ).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Schedule row not found for: {task_key}")
+    return _serialize_row(row)

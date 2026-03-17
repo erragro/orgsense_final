@@ -91,6 +91,32 @@ def _get_connection() -> psycopg2.extensions.connection:
 
 
 # ============================================================
+# SCHEDULER ENABLE/DISABLE HELPER
+# ============================================================
+
+def _is_task_enabled(task_key: str) -> bool:
+    """
+    Check if a beat task is enabled via the cardinal_beat_schedule DB table.
+    Defaults to True (fail-open) if the row doesn't exist or DB is unavailable.
+    This allows enable/disable to take effect on the next beat tick with no restart.
+    """
+    try:
+        conn = _get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT enabled FROM kirana_kart.cardinal_beat_schedule WHERE task_key = %s",
+                    (task_key,),
+                )
+                row = cur.fetchone()
+                return row[0] if row is not None else True
+        finally:
+            conn.close()
+    except Exception:
+        return True  # fail-open: never block tasks on DB error
+
+
+# ============================================================
 # SCHEDULED TASKS
 # ============================================================
 
@@ -105,6 +131,9 @@ def beat_poll_streams() -> dict[str, int]:
     Each invocation reads up to STREAM_BATCH_SIZE messages
     per stream and dispatches them as process_ticket tasks.
     """
+    if not _is_task_enabled("poll-streams-every-5s"):
+        logger.debug("beat_poll_streams: disabled, skipping")
+        return {"skipped": True}
     ensure_consumer_groups()
     dispatched = poll_streams_once()
     if dispatched:
@@ -120,6 +149,9 @@ def beat_reclaim_idle_messages() -> dict[str, int]:
 
     Beat schedules this every 60 seconds.
     """
+    if not _is_task_enabled("reclaim-idle-every-60s"):
+        logger.debug("beat_reclaim_idle_messages: disabled, skipping")
+        return {"skipped": True}
     reclaimed = reclaim_idle_messages()
     if reclaimed:
         logger.warning("beat_reclaim_idle_messages: reclaimed %d message(s)", reclaimed)
@@ -145,6 +177,9 @@ def beat_refresh_risk_profiles() -> dict[str, int]:
     Note: This is the computation job referenced in migration 004.
     The triggers log changes; this job processes them.
     """
+    if not _is_task_enabled("refresh-risk-profiles-hourly"):
+        logger.debug("beat_refresh_risk_profiles: disabled, skipping")
+        return {"skipped": True}
     cutoff = datetime.now(timezone.utc) - timedelta(hours=RISK_PROFILE_STALE_HOURS)
     conn   = _get_connection()
     updated = 0
@@ -213,6 +248,9 @@ def beat_purge_stale_dedup_keys() -> dict[str, int]:
 
     Beat schedules this daily at 02:00 UTC.
     """
+    if not _is_task_enabled("purge-stale-dedup-keys-daily"):
+        logger.debug("beat_purge_stale_dedup_keys: disabled, skipping")
+        return {"skipped": True}
     cutoff = datetime.now(timezone.utc) - timedelta(days=30)
     conn   = _get_connection()
     try:
@@ -248,6 +286,9 @@ def beat_execution_plan_timeout() -> dict[str, int]:
 
     Beat schedules this every 10 minutes.
     """
+    if not _is_task_enabled("timeout-stuck-executions-every-10m"):
+        logger.debug("beat_execution_plan_timeout: disabled, skipping")
+        return {"skipped": True}
     timeout_cutoff = datetime.now(timezone.utc) - timedelta(
         minutes=EXECUTION_TIMEOUT_MINUTES
     )

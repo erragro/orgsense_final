@@ -16,7 +16,8 @@ The governance control plane is a **FastAPI backend** that manages the full life
 - **Ticket processing** — 5-phase ingest pipeline, 4-stage LLM resolution, Celery workers
 - **BI Agent** — Natural language SQL queries over the read-only `bi_readonly` role
 - **Channel Integrations** — Gmail, Outlook, SMTP/IMAP mailbox polling + API key management; emails auto-submitted as tickets into the Cardinal pipeline
-- **Cardinal Intelligence** — Read-only observability over the full Cardinal pipeline (phase stats, per-ticket LLM traces, audit log) + admin reprocess tool; access is default-deny for new users
+- **Cardinal Intelligence** — Read-only observability over the full Cardinal pipeline (phase stats, per-ticket LLM traces, audit log) + admin reprocess tool + Celery Beat scheduler management (enable/disable/trigger periodic tasks); access is default-deny for new users
+- **QA Agent** — Hybrid quality-assurance evaluation engine: 12 deterministic Python checks (COPC, ISO 15838, Six Sigma, FinOps standards) + 10 LLM semantic parameters via gpt-4o, blended into a single score; results stream via SSE in real time
 - **Observability** — Prometheus metrics, structured JSON logging, correlation IDs
 
 ---
@@ -135,6 +136,7 @@ Each user has per-module `{can_view, can_edit, can_admin}` booleans:
 | `biAgent` | Natural language SQL | ✅ granted |
 | `sandbox` | Testing sandbox | ✅ granted |
 | `cardinal` | Pipeline observability + reprocess | ❌ **denied** (admin must grant) |
+| `qaAgent` | QA Agent — hybrid Python + LLM evaluation | ✅ granted |
 
 `is_super_admin = true` bypasses all permission checks.
 
@@ -207,6 +209,48 @@ kirana_kart.integrations
 | `outlook` | `email_address`, `tenant_id`, `client_id`, `client_secret`, `poll_interval_minutes`, `folder`, `mark_as_read` |
 | `smtp` | `email_address`, `imap_host`, `imap_port`, `username`, `password`, `use_ssl`, `poll_interval_minutes`, `folder`, `mark_as_read` |
 | `api` | `api_key` (`kk_live_` + 64 hex), `description`, `ingest_url` |
+
+### QA Agent Tables (auto-created on startup)
+
+```sql
+kirana_kart.qa_sessions
+  id SERIAL PK, label VARCHAR, user_id INTEGER, created_at, updated_at
+
+kirana_kart.qa_evaluations
+  id SERIAL PK, session_id → qa_sessions(id) CASCADE,
+  ticket_id INTEGER, overall_score NUMERIC(5,4), grade VARCHAR(1),
+  python_qa_score NUMERIC(5,4), python_findings JSONB,  -- 12 check results
+  llm_qa_score NUMERIC(5,4), llm_parameters JSONB,      -- 10 semantic scores
+  summary TEXT, status VARCHAR, created_at
+```
+
+### Cardinal Scheduler Table (auto-created on startup)
+
+```sql
+kirana_kart.cardinal_beat_schedule
+  id               SERIAL PK
+  task_key         VARCHAR(100) UNIQUE NOT NULL   -- e.g. "poll-streams-every-5s"
+  task_name        VARCHAR(200) NOT NULL          -- Celery task dotted path
+  display_name     VARCHAR(200) NOT NULL          -- human-readable label
+  description      TEXT
+  schedule_type    VARCHAR(20) NOT NULL           -- 'interval' | 'crontab'
+  interval_seconds INTEGER                        -- set for interval tasks
+  cron_expression  VARCHAR(100)                   -- set for crontab tasks
+  enabled          BOOLEAN NOT NULL DEFAULT true  -- checked by task guard at runtime
+  last_triggered_at TIMESTAMPTZ                   -- updated on manual trigger
+  updated_at       TIMESTAMPTZ DEFAULT NOW()
+  updated_by       VARCHAR(200)                   -- email of last editor
+```
+
+Seeded with 5 default rows on governance startup (INSERT … ON CONFLICT DO NOTHING):
+
+| task_key | display_name | schedule_type | interval |
+|---|---|---|---|
+| `poll-streams-every-5s` | Stream Poll | interval | 5s |
+| `reclaim-idle-every-60s` | Idle Message Reclaim | interval | 60s |
+| `refresh-risk-profiles-hourly` | Risk Profile Refresh | crontab | `0 * * * *` |
+| `timeout-stuck-executions-every-10m` | Execution Timeout Check | interval | 600s |
+| `purge-stale-dedup-keys-daily` | Dedup Key Purge | crontab | `0 2 * * *` |
 
 ### Business Tables
 
@@ -365,9 +409,35 @@ Requires `knowledgeBase.*` permissions.
 | GET | `/vectorization/status/{label}` | knowledgeBase.view | Vector job status |
 | POST | `/simulation/run` | policy.admin | Compare two policy versions |
 
+### QA Agent (`/qa-agent`)
+
+All endpoints require `qaAgent.view`.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/qa-agent/sessions` | List all QA sessions (newest first) |
+| POST | `/qa-agent/sessions` | Create a new named session |
+| DELETE | `/qa-agent/sessions/{id}` | Delete session and cascade-delete its evaluations |
+| GET | `/qa-agent/tickets/search?limit=N` | Return N most-recent completed tickets (no filter required) |
+| POST | `/qa-agent/evaluate` | **SSE stream** — runs 12 Python checks then 10 LLM parameters; saves result to `qa_evaluations` |
+| GET | `/qa-agent/evaluations/{id}` | Fetch stored evaluation with full check/parameter breakdown |
+
+**SSE event types emitted by `/qa-agent/evaluate`:**
+
+| Event | Payload | Notes |
+|---|---|---|
+| `python_check` | `{name, passed, score, weight, details}` | Fires 12× — one per deterministic check |
+| `python_summary` | `{python_score, checks_passed, checks_failed}` | After all 12 checks |
+| `parameter` | `{name, score, reasoning}` | Fires 10× — one per LLM semantic parameter |
+| `summary` | `{overall_score, grade, llm_score, python_score, summary}` | Blended score + grade |
+| `done` | `{evaluation_id}` | Persisted — use `evaluation_id` to fetch full record |
+
+**Score blending:** `overall_score = 0.35 × python_score + 0.65 × llm_score`
+**Grades:** A ≥ 90% · B ≥ 75% · C ≥ 60% · D ≥ 45% · F < 45%
+
 ### Cardinal Intelligence (`/cardinal`)
 
-All GETs require `cardinal.view`. Reprocess requires `cardinal.admin`.
+All GETs require `cardinal.view`. Reprocess and scheduler mutations require `cardinal.admin`.
 Access is **default-deny** — new users receive `can_view = false` and must be granted access by a super-admin.
 
 | Method | Endpoint | Permission | Description |
@@ -378,6 +448,10 @@ Access is **default-deny** — new users receive `can_view = false` and must be 
 | GET | `/cardinal/executions/{ticket_id}` | view | Full execution trace — raw ticket + all LLM outputs + metrics + audit events |
 | GET | `/cardinal/audit` | view | Paginated execution audit log |
 | POST | `/cardinal/reprocess/{ticket_id}` | admin | Re-submit ticket to `http://ingest:8000/cardinal/ingest` |
+| GET | `/cardinal/schedules` | view | List all 5 Celery Beat schedule rows |
+| PATCH | `/cardinal/schedules/{task_key}` | admin | Update `enabled`, `interval_seconds`, or `cron_expression` |
+| POST | `/cardinal/schedules/{task_key}/trigger` | admin | Fire the task immediately via Celery `send_task` + update `last_triggered_at` |
+| POST | `/cardinal/schedules/{task_key}/reset` | admin | Restore original interval/cron + set `enabled = true` |
 
 ### Channel Integrations (`/integrations`)
 
@@ -490,12 +564,15 @@ kirana_kart/
 │   │   │   ├── analytics.py      # /analytics/* endpoints
 │   │   │   ├── bi_agent.py       # /bi-agent/* endpoints + BI chat tables
 │   │   │   ├── integrations.py   # /integrations/* endpoints (CRUD + test + toggle + sync)
-│   │   │   ├── cardinal.py       # /cardinal/* endpoints (overview, phase-stats, executions, audit, reprocess)
+│   │   │   ├── cardinal.py       # /cardinal/* endpoints (overview, phase-stats, executions, audit, reprocess, beat scheduler CRUD)
+│   │   │   ├── qa_agent.py       # /qa-agent/* endpoints (sessions, ticket search, SSE evaluate)
 │   │   │   └── system.py         # /system/* endpoints
 │   │   └── services/
 │   │       ├── auth_service.py       # JWT, bcrypt, UserContext, require_permission()
 │   │       ├── oauth_service.py      # GitHub / Google / Microsoft OAuth flows
 │   │       ├── integration_service.py # DB setup, Gmail/Outlook/IMAP polling, poller daemon
+│   │       ├── qa_agent_service.py   # QA session/evaluation DB ops, ensure_qa_tables()
+│   │       ├── qa_python_evaluators.py # 12 deterministic COPC/ISO/Six Sigma check functions
 │   │       ├── taxonomy_service.py
 │   │       └── vector_service.py
 │   │
@@ -515,7 +592,7 @@ kirana_kart/
 │   │
 │   ├── l4_agents/                # Celery worker — 4-stage LLM pipeline
 │   │   ├── worker.py             # Stream poll loop + Celery app
-│   │   └── tasks.py              # process_ticket task
+│   │   └── tasks.py              # process_ticket task + 5 beat tasks (each guarded by _is_task_enabled())
 │   │
 │   ├── l45_ml_platform/          # Compiler + vectorization + simulation
 │   │   ├── compiler/

@@ -346,9 +346,7 @@ def search_tickets(
                     lo2.issue_type_l2_verified    AS issue_type_l2,
                     lo3.final_action_code         AS action_code,
                     lo2.overall_confidence,
-                    ps.processing_completed_at,
-                    ps.stage_0_status, ps.stage_1_status,
-                    ps.stage_2_status, ps.stage_3_status
+                    ps.processing_completed_at
                 FROM kirana_kart.fdraw f
                 INNER JOIN LATERAL (
                     SELECT processing_completed_at,

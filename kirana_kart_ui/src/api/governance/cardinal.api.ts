@@ -12,6 +12,9 @@ import type {
   ReprocessResult,
   ExecutionFilters,
   AuditFilters,
+  BeatSchedule,
+  ScheduleUpdate,
+  TriggerResult,
 } from '@/types/cardinal.types'
 
 export const cardinalApi = {
@@ -42,4 +45,20 @@ export const cardinalApi = {
   /** Re-submit a ticket through the Cardinal pipeline. Requires cardinal.admin. */
   reprocess: (ticketId: string) =>
     governanceClient.post<ReprocessResult>(`/cardinal/reprocess/${ticketId}`),
+
+  /** List all Celery Beat schedule configs. */
+  schedules: () =>
+    governanceClient.get<BeatSchedule[]>('/cardinal/schedules'),
+
+  /** Update a beat schedule's enabled flag or interval. Requires cardinal.admin. */
+  updateSchedule: (taskKey: string, patch: ScheduleUpdate) =>
+    governanceClient.patch<BeatSchedule>(`/cardinal/schedules/${taskKey}`, patch),
+
+  /** Manually fire a beat task immediately. Requires cardinal.admin. */
+  triggerSchedule: (taskKey: string) =>
+    governanceClient.post<TriggerResult>(`/cardinal/schedules/${taskKey}/trigger`),
+
+  /** Reset a schedule to default interval and re-enable it. Requires cardinal.admin. */
+  resetSchedule: (taskKey: string) =>
+    governanceClient.post<BeatSchedule>(`/cardinal/schedules/${taskKey}/reset`),
 }
