@@ -351,9 +351,15 @@ def process_ticket(
             raise WorkerError(f"ticket_id={ticket_id} not found in fdraw")
         canonical_payload = ticket_context.get("canonical_payload") or {}
         customer_context = canonical_payload.get("customer_context") or {}
-        fields["order_context"] = customer_context.get("order") or {}
-        fields["risk_context"] = customer_context.get("risk") or {}
-        fields["policy_context"] = customer_context.get("policy") or {}
+        fields["order_context"]       = customer_context.get("order") or {}
+        fields["risk_context"]        = customer_context.get("risk") or {}
+        fields["policy_context"]      = customer_context.get("policy") or {}
+        fields["customer_profile"]    = customer_context.get("customer") or {}
+        fields["prior_complaints_30d"] = int(
+            customer_context.get("prior_complaints_30d")
+            or fields.get("prior_complaints_30d")
+            or 0
+        )
 
         # ----------------------------------------------------------
         # Fetch rules from rule_registry
@@ -802,14 +808,15 @@ def _run_stage_2(
                         override_reason,
                         override_type,
                         llm_overall_accuracy,
-                        detailed_reasoning
+                        detailed_reasoning,
+                        policy_version
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s,
                         %s, %s, %s,
                         %s, %s, %s,
-                        %s, %s
+                        %s, %s, %s
                     )
                     ON CONFLICT (ticket_id, execution_id) DO UPDATE SET
                         order_id                           = EXCLUDED.order_id,
@@ -837,6 +844,7 @@ def _run_stage_2(
                         override_type                      = EXCLUDED.override_type,
                         llm_overall_accuracy               = EXCLUDED.llm_overall_accuracy,
                         detailed_reasoning                 = EXCLUDED.detailed_reasoning,
+                        policy_version                     = EXCLUDED.policy_version,
                         updated_at                         = CURRENT_TIMESTAMP
                     RETURNING id
                     """,
@@ -868,6 +876,7 @@ def _run_stage_2(
                         stage2.get("override_type"),
                         stage2.get("llm_overall_accuracy"),
                         stage2.get("reasoning"),
+                        fields.get("active_policy") or "",
                     ),
                 )
                 row = cur.fetchone()
@@ -949,11 +958,14 @@ def _fetch_rules(
 ) -> list[dict]:
     """
     Fetch applicable rules from rule_registry for this ticket.
-    Filters by policy_version + module_name + business_line.
+    Filters by policy_version only — rules are cross-cutting business policies
+    not tied to the ticket's lowercase module label ("delivery", "quality", etc.).
+    The rule_registry module_name is a human-readable category name used inside
+    the KB pipeline, not a ticket-module selector.
     Returns rules ordered by priority ASC (lower number = higher priority).
     """
-    if not policy_version or not module:
-        logger.warning("Cannot fetch rules: policy_version or module missing")
+    if not policy_version:
+        logger.warning("Cannot fetch rules: policy_version missing")
         return []
 
     conn = _get_connection()
@@ -966,14 +978,14 @@ def _fetch_rules(
                     filters, numeric_constraints, flags,
                     conditions, action_id, action_payload,
                     issue_type_l1, issue_type_l2,
-                    customer_segment, fraud_segment
+                    customer_segment, fraud_segment,
+                    module_name
                 FROM {SCHEMA}.rule_registry
                 WHERE policy_version = %s
-                AND   module_name    = %s
                 AND   (business_line = %s OR business_line IS NULL)
                 ORDER BY priority ASC
                 """,
-                (policy_version, module, business_line),
+                (policy_version, business_line),
             )
             rows = cur.fetchall()
         return [dict(r) for r in rows]

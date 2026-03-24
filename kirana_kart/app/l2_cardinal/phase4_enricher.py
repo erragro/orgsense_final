@@ -171,9 +171,11 @@ class OrderContext:
     order_value:            float
     delivery_estimated:     Optional[str]  = None  # ISO string
     delivery_actual:        Optional[str]  = None  # ISO string
+    delivery_status:        str            = "unknown"  # from orders.delivery_status
     sla_breach:             bool           = False
     delivery_delay_minutes: Optional[int]  = None  # Computed: actual - estimated
     is_high_value:          bool           = False  # order_value >= HIGH_VALUE_ORDER_THRESHOLD
+    gps_confirmed_delivery: bool           = False  # True if delivery_events has GPS-confirmed DELIVERED event
     order_found:            bool           = True
 
 
@@ -564,7 +566,7 @@ def _fetch_risk_profile(customer_id: Optional[str]) -> RiskProfile:
 
 def _fetch_order_context(order_id: str) -> OrderContext:
     """
-    Fetch order row + compute delivery delay.
+    Fetch order row + compute delivery delay + GPS confirmation.
     Returns OrderContext with order_found=False if not in DB.
     """
     conn = _get_connection()
@@ -575,7 +577,7 @@ def _fetch_order_context(order_id: str) -> OrderContext:
                 SELECT
                     order_id, customer_id, order_value,
                     delivery_estimated, delivery_actual,
-                    sla_breach
+                    delivery_status, sla_breach
                 FROM {SCHEMA}.orders
                 WHERE order_id = %s
                 LIMIT 1
@@ -598,6 +600,11 @@ def _fetch_order_context(order_id: str) -> OrderContext:
             delta = row["delivery_actual"] - row["delivery_estimated"]
             delay_minutes = int(delta.total_seconds() / 60)
 
+        delivery_status = (row.get("delivery_status") or "unknown").lower()
+
+        # GPS confirmation: check delivery_events for a confirmed DELIVERED event
+        gps_confirmed = _check_gps_delivery_confirmation(conn, order_id)
+
         return OrderContext(
             order_id=row["order_id"],
             customer_id=row["customer_id"],
@@ -606,9 +613,11 @@ def _fetch_order_context(order_id: str) -> OrderContext:
                 if row.get("delivery_estimated") else None,
             delivery_actual=row["delivery_actual"].isoformat()
                 if row.get("delivery_actual") else None,
+            delivery_status=delivery_status,
             sla_breach=bool(row["sla_breach"]),
             delivery_delay_minutes=delay_minutes,
             is_high_value=float(row["order_value"]) >= HIGH_VALUE_ORDER_THRESHOLD,
+            gps_confirmed_delivery=gps_confirmed,
             order_found=True,
         )
 
@@ -617,6 +626,39 @@ def _fetch_order_context(order_id: str) -> OrderContext:
         return OrderContext(order_id=order_id, customer_id="", order_value=0.0, order_found=False)
     finally:
         conn.close()
+
+
+def _check_gps_delivery_confirmation(
+    conn: psycopg2.extensions.connection,
+    order_id: str,
+) -> bool:
+    """
+    Check delivery_events for a GPS-confirmed DELIVERED event.
+
+    Returns True if there is a DELIVERED event with non-null gps_lat + gps_lng,
+    which satisfies R-001/R-003: GPS shows delivery confirmation within delivery zone.
+    Returns False if no such event exists (delivery unconfirmed by GPS).
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT 1
+                FROM {SCHEMA}.delivery_events
+                WHERE order_id  = %s
+                AND   event_type = 'DELIVERED'
+                AND   gps_lat   IS NOT NULL
+                AND   gps_lng   IS NOT NULL
+                LIMIT 1
+                """,
+                (order_id,),
+            )
+            return cur.fetchone() is not None
+    except psycopg2.Error as exc:
+        logger.warning(
+            "GPS confirmation check failed for order_id='%s': %s", order_id, exc
+        )
+        return False  # safe default: treat as unconfirmed if DB error
 
 
 # ============================================================

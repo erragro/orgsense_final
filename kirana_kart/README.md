@@ -1,5 +1,6 @@
 # Kirana Kart — Governance Control Plane (Backend)
 
+**Version:** 4.0.0
 **Stack:** FastAPI · PostgreSQL · Weaviate · OpenAI · Redis · Celery
 **Python:** 3.12+
 **Auth:** JWT (python-jose) + bcrypt (passlib) + OAuth 2.0
@@ -59,10 +60,44 @@ The governance control plane is a **FastAPI backend** that manages the full life
 | `app/admin` | Auth, taxonomy, user management, system |
 | `app/l1_ingestion` | Raw document upload + KB registry |
 | `app/l15_preprocessing` | KB bridge: 6-layer validation + compilation |
-| `app/l2_cardinal` | 5-phase ticket ingest pipeline |
-| `app/l4_agents` | Celery worker — 4-stage LLM resolution pipeline |
+| `app/l2_cardinal` | 5-phase ticket ingest pipeline (+ GPS enrichment in `phase4_enricher.py`) |
+| `app/l3_analytics` | Spike detection (HDBSCAN clustering), true FCR computation |
+| `app/l4_agents` | Celery worker — 4-stage LLM resolution pipeline, async FCR checker, agent QA scorer |
 | `app/l45_ml_platform` | Compiler, vectorization, simulation |
 | `app/l5_intelligence` | Shadow policy testing |
+
+### v4.0 Fixes & Additions
+
+#### P1 — Refund Fraud & Policy Leakage
+- **`_fetch_rules` fix** (`worker.py`): Removed `AND module_name = %s` filter that caused zero deterministic rules to be loaded for every ticket. Ticket `module` labels ("delivery", "quality") never matched rule `module_name` values ("Fraud & Abuse Intelligence", "Resolution Policy…"). All rules for the active policy version are now fetched and applied.
+- **`policy_version` persisted** (`worker.py`): The `llm_output_3` INSERT now writes `policy_version` (from `fields["active_policy"]`) so every resolved ticket is traceable to the exact rule set that governed it.
+- **GPS delivery enrichment** (`l2_cardinal/phase4_enricher.py`): Pulls `gps_lat`/`gps_lng` from `delivery_events` table and writes `gps_confirmed_delivery` boolean into enriched context. Stage 1 evaluator uses this to satisfy R-001/R-003 GPS-based delivery proof rules.
+- **R-005 tier auto-approve** (`l4_agents/ecommerce/stage2_validator.py`): Gold and Platinum customers on their first claim for an order are automatically routed to `AUTO_RESOLVED` regardless of refund amount, without requiring Stage 2 escalation.
+- **Agent bad-actor flagging** (`l4_agents/tasks.py`): New Celery task `flag_bad_actor_agents` queries `ticket_execution_summary` grouped by `agent_id`, flags agents with high policy-ineligible refund rates, and writes results to `agent_quality_flags` table.
+
+#### P2 — Agent Quality
+- **`agent_qa_scorer.py`** (`l4_agents/ecommerce/`): New module — canned response detector (TF-IDF similarity against `conversation_turns`), grammar error counter (spaCy), sentiment arc (per-conversation customer sentiment trajectory), and daily per-agent QA score aggregation.
+
+#### P3 — Ticket Spike Root Cause
+- **`l3_analytics/clustering_service.py`** (new): `SpikeDetector` computes per-15-min ticket volume vs rolling average and emits spike events. `RootCauseClustering` runs HDBSCAN over `llm_output_1` embeddings within spike windows and writes top clusters to `spike_reports` table.
+
+#### P4 — True FCR
+- **`l3_analytics/fcr_service.py`** (new): Queries `ticket_execution_summary` and `llm_output_1` to compute true re-contact rate per `customer_id × issue_type_l2`.
+- **Async FCR checker** (`l4_agents/tasks.py`): 48h after `resolution_status = resolved`, checks whether the same customer re-contacted on the same `issue_type_l2` within the window and updates the `fcr` column.
+
+#### Analytics Dashboard
+- **Three new tabs** (`kirana_kart_ui/src/pages/analytics/AnalyticsPage.tsx`):
+  - **True FCR** — summary cards, FCR by intent breakdown table, daily FCR trend chart
+  - **Spike Reports** — spike cards with σ-above baseline, per-spike cluster breakdown tables
+  - **Agent Quality** — coverage stats, resolved-filter selector, agent flags table, per-agent QA score table (canned ratio, grammar errors, avg QA score)
+- Backend endpoints: `GET /analytics/fcr`, `GET /analytics/spikes`, `GET /analytics/agent-quality` added to `app/admin/routes/analytics.py`.
+- Frontend API helpers added to `kirana_kart_ui/src/api/governance/analytics.api.ts`.
+
+#### QA Agent
+- **KB Evidence panel fix** (`app/admin/services/qa_agent_service.py`): `retrieve_kb_evidence` fallback path now queries `kb_runtime_config.active_version` instead of the non-existent `kb_versions` table. The KB Evidence panel now correctly loads rules from Weaviate for the active policy version.
+
+#### CORS
+- **Extended origins** (`app/admin/main.py`): Added ports 51000–51199 to `allow_origins` to accommodate Vite preview server which assigns non-standard ports.
 
 ---
 

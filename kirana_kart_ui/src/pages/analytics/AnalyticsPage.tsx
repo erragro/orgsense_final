@@ -22,9 +22,9 @@ import { analyticsApi } from '@/api/governance/analytics.api'
 import type { EvaluationRecord, EvaluationResponse } from '@/types/analytics.types'
 import { formatCurrency, formatDuration, formatPercent } from '@/lib/utils'
 import { cn } from '@/lib/cn'
-import { BarChart3, X } from 'lucide-react'
+import { BarChart3, X, AlertTriangle, CheckCircle2, Clock } from 'lucide-react'
 
-type Tab = 'resolution' | 'csat' | 'refunds' | 'sla' | 'evaluations'
+type Tab = 'resolution' | 'csat' | 'refunds' | 'sla' | 'evaluations' | 'fcr' | 'spikes' | 'agent_quality'
 
 const PAGE_SIZE = 50
 
@@ -149,6 +149,12 @@ export default function AnalyticsPage() {
   const [evalStandardLogic,        setEvalStandardLogic]        = useState('')
   const [evalOverrideApplied,      setEvalOverrideApplied]      = useState('')
 
+  // ── FCR / Spikes / Agent Quality filter state ──
+  const [fcrPage,    setFcrPage]    = useState(1)
+  const [spikeLimit, setSpikeLimit] = useState(20)
+  const [aqPage,     setAqPage]     = useState(1)
+  const [aqResolved, setAqResolved] = useState('')
+
   // ── Summary data (resolution / csat / refunds / sla tabs) ──
   const { data: summaryData, isError: summaryError } = useQuery({
     queryKey: ['analytics', 'summary', { dateFrom, dateTo }],
@@ -192,6 +198,24 @@ export default function AnalyticsPage() {
     enabled: activeTab === 'evaluations',
   })
 
+  const { data: fcrData, isLoading: fcrLoading } = useQuery({
+    queryKey: ['analytics', 'fcr', { dateFrom, dateTo }],
+    queryFn: () => analyticsApi.getFCR({ date_from: dateFrom || undefined, date_to: dateTo || undefined }).then((r) => r.data),
+    enabled: activeTab === 'fcr',
+  })
+
+  const { data: spikesData, isLoading: spikesLoading } = useQuery({
+    queryKey: ['analytics', 'spikes', spikeLimit],
+    queryFn: () => analyticsApi.getSpikes({ limit: spikeLimit }).then((r) => r.data),
+    enabled: activeTab === 'spikes',
+  })
+
+  const { data: aqData, isLoading: aqLoading } = useQuery({
+    queryKey: ['analytics', 'agent-quality', { aqPage, aqResolved }],
+    queryFn: () => analyticsApi.getAgentQuality({ page: aqPage, limit: 50, resolved: aqResolved || undefined }).then((r) => r.data),
+    enabled: activeTab === 'agent_quality',
+  })
+
   // ── Active filter chips ──
   const activeFilters: { label: string; value: string; clear: () => void }[] = [
     evalModule               && { label: 'Module',       value: evalModule,               clear: () => { setEvalModule('');               setEvalPage(1) } },
@@ -221,15 +245,19 @@ export default function AnalyticsPage() {
   )
 
   const TABS: { key: Tab; label: string }[] = [
-    { key: 'resolution',  label: 'Resolution' },
-    { key: 'csat',        label: 'CSAT' },
-    { key: 'refunds',     label: 'Refunds' },
-    { key: 'sla',         label: 'SLA Breach' },
-    { key: 'evaluations', label: 'Evaluation Matrix' },
+    { key: 'resolution',   label: 'Resolution' },
+    { key: 'csat',         label: 'CSAT' },
+    { key: 'refunds',      label: 'Refunds' },
+    { key: 'sla',          label: 'SLA Breach' },
+    { key: 'evaluations',  label: 'Evaluation Matrix' },
+    { key: 'fcr',          label: 'True FCR' },
+    { key: 'spikes',       label: 'Spike Reports' },
+    { key: 'agent_quality',label: 'Agent Quality' },
   ]
 
-  // For non-evaluation tabs, show placeholder if summary is unavailable
-  const showSummaryPlaceholder = activeTab !== 'evaluations' && (summaryError || !summaryData)
+  const SUMMARY_TABS: Tab[] = ['resolution', 'csat', 'refunds', 'sla']
+  // For summary-based tabs, show placeholder if summary is unavailable
+  const showSummaryPlaceholder = SUMMARY_TABS.includes(activeTab) && (summaryError || !summaryData)
 
   const makeOptions = (vals: string[] | undefined, placeholder: string) => [
     { value: '', label: placeholder },
@@ -352,6 +380,297 @@ export default function AnalyticsPage() {
                   highlight={summaryData.sla_breach_rate > 0.1 ? 'red' : 'green'}
                 />
               </div>
+            </div>
+          )}
+
+          {/* ── True FCR ─────────────────────────────────────────── */}
+          {activeTab === 'fcr' && (
+            <div className="space-y-4">
+              {fcrLoading ? (
+                <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
+              ) : !fcrData ? (
+                <Card><CardContent><EmptyState icon={<CheckCircle2 className="w-10 h-10 text-subtle" />} title="No FCR data" description="FCR data will appear after the async checker has run (48 h post-resolution)." /></CardContent></Card>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <StatCard label="Total FCR Checked"  value={fcrData.total_checked.toLocaleString()} />
+                    <StatCard label="True FCR Rate"       value={fcrData.true_fcr_rate != null ? formatPercent(fcrData.true_fcr_rate) : '—'} highlight="green" />
+                    <StatCard label="FCR: True"           value={fcrData.fcr_true.toLocaleString()} highlight="green" />
+                    <StatCard label="FCR: False / Pending" value={`${fcrData.fcr_false.toLocaleString()} / ${fcrData.fcr_pending.toLocaleString()}`} highlight="red" />
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <Card>
+                      <CardHeader><CardTitle>FCR by Intent Type</CardTitle></CardHeader>
+                      <CardContent>
+                        {fcrData.by_intent.length === 0 ? (
+                          <EmptyState title="No intent breakdown yet" description="Requires resolved tickets with FCR checked." />
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="border-b border-surface-border text-left text-subtle">
+                                  <th className="py-2 px-3">Intent</th>
+                                  <th className="py-2 px-3 text-right">Total</th>
+                                  <th className="py-2 px-3 text-right">FCR True</th>
+                                  <th className="py-2 px-3 text-right">FCR False</th>
+                                  <th className="py-2 px-3 text-right">True FCR %</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-surface-border">
+                                {fcrData.by_intent.map((row) => (
+                                  <tr key={row.intent} className="hover:bg-surface-card/50">
+                                    <td className="py-2 px-3 font-mono text-brand-400">{row.intent}</td>
+                                    <td className="py-2 px-3 text-right">{row.total.toLocaleString()}</td>
+                                    <td className="py-2 px-3 text-right text-green-400">{row.fcr_true.toLocaleString()}</td>
+                                    <td className="py-2 px-3 text-right text-red-400">{row.fcr_false.toLocaleString()}</td>
+                                    <td className="py-2 px-3 text-right font-mono">
+                                      {row.true_fcr_rate != null
+                                        ? <span className={row.true_fcr_rate < 0.6 ? 'text-red-400' : 'text-green-400'}>{formatPercent(row.true_fcr_rate)}</span>
+                                        : '—'}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader><CardTitle>FCR Trend (daily)</CardTitle></CardHeader>
+                      <CardContent>
+                        {fcrData.trend.length === 0 ? (
+                          <EmptyState title="No trend data yet" />
+                        ) : (
+                          <TrendLineChart
+                            data={fcrData.trend as unknown as Record<string, unknown>[]}
+                            lines={[
+                              { key: 'checked',  name: 'Checked',  color: '#94a3b8' },
+                              { key: 'fcr_true', name: 'FCR True', color: '#22c55e' },
+                            ]}
+                          />
+                        )}
+                      </CardContent>
+                    </Card>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── Spike Reports ─────────────────────────────────────── */}
+          {activeTab === 'spikes' && (
+            <div className="space-y-4">
+              {spikesLoading ? (
+                <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
+              ) : !spikesData || spikesData.items.length === 0 ? (
+                <Card>
+                  <CardContent>
+                    <EmptyState
+                      icon={<AlertTriangle className="w-10 h-10 text-subtle" />}
+                      title={spikesData?.message ?? 'No spike reports yet'}
+                      description="The spike detector runs every 15 minutes. Reports appear here when ticket volume exceeds 2σ above baseline."
+                    />
+                  </CardContent>
+                </Card>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                    <StatCard label="Total Spikes Detected" value={spikesData.total.toLocaleString()} highlight="red" />
+                    <StatCard label="Most Recent Spike"     value={new Date(spikesData.items[0].window_start).toLocaleString()} />
+                    <StatCard label="Peak σ Above Baseline" value={Math.max(...spikesData.items.map((s) => s.sigma_above)).toFixed(1) + 'σ'} highlight="red" />
+                  </div>
+
+                  <div className="space-y-3">
+                    {spikesData.items.map((spike) => (
+                      <Card key={spike.spike_id}>
+                        <CardHeader>
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <CardTitle className="text-sm">
+                              <Clock className="w-4 h-4 inline mr-1 text-amber-400" />
+                              {new Date(spike.window_start).toLocaleString()} → {new Date(spike.window_end).toLocaleTimeString()}
+                            </CardTitle>
+                            <div className="flex gap-3 text-xs text-muted">
+                              <span>Volume: <strong className="text-red-400">{spike.current_volume}</strong></span>
+                              <span>Baseline: {spike.baseline_mean.toFixed(0)}</span>
+                              <span className="text-amber-400 font-mono">{spike.sigma_above.toFixed(1)}σ</span>
+                              <span className="text-subtle">{spike.cluster_method}</span>
+                            </div>
+                          </div>
+                        </CardHeader>
+                        <CardContent>
+                          {spike.clusters_json.length === 0 ? (
+                            <p className="text-xs text-muted">No cluster breakdown available.</p>
+                          ) : (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-xs">
+                                <thead>
+                                  <tr className="border-b border-surface-border text-left text-subtle">
+                                    <th className="py-1.5 px-3">Cluster</th>
+                                    <th className="py-1.5 px-3 text-right">Count</th>
+                                    <th className="py-1.5 px-3 text-right">%</th>
+                                    <th className="py-1.5 px-3">Top Issue L1</th>
+                                    <th className="py-1.5 px-3">Top Issue L2</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-surface-border">
+                                  {spike.clusters_json.map((c, ci) => (
+                                    <tr key={ci} className="hover:bg-surface-card/50">
+                                      <td className="py-1.5 px-3 font-medium">{c.name}</td>
+                                      <td className="py-1.5 px-3 text-right font-mono">{c.count}</td>
+                                      <td className="py-1.5 px-3 text-right font-mono text-amber-400">{c.percentage.toFixed(1)}%</td>
+                                      <td className="py-1.5 px-3 text-brand-400">{c.top_issue_l1}</td>
+                                      <td className="py-1.5 px-3 text-muted">{c.top_issue_l2}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── Agent Quality ─────────────────────────────────────── */}
+          {activeTab === 'agent_quality' && (
+            <div className="space-y-4">
+              {aqLoading ? (
+                <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
+              ) : !aqData ? (
+                <Card><CardContent><EmptyState icon={<AlertTriangle className="w-10 h-10 text-subtle" />} title="No agent quality data" description="Agent QA scoring runs every 5 minutes against closed conversations." /></CardContent></Card>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <StatCard label="QA Coverage"            value={formatPercent(aqData.coverage)}                             highlight={aqData.coverage > 0.8 ? 'green' : 'amber'} />
+                    <StatCard label="Total Conversations"    value={aqData.total_conversations.toLocaleString()} />
+                    <StatCard label="Total Scored"           value={aqData.total_scored.toLocaleString()} />
+                    <StatCard label="Active Flags"           value={aqData.total_flags.toLocaleString()}                        highlight={aqData.total_flags > 0 ? 'red' : 'green'} />
+                  </div>
+
+                  {/* Filter */}
+                  <div className="flex gap-3 items-center">
+                    <Select
+                      options={[
+                        { value: '',      label: 'All Flags' },
+                        { value: 'false', label: 'Unresolved' },
+                        { value: 'true',  label: 'Resolved' },
+                      ]}
+                      value={aqResolved}
+                      onChange={(e) => { setAqResolved(e.target.value); setAqPage(1) }}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {/* Agent flags */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Agent Flags  <span className="text-xs font-normal text-subtle ml-2">policy-ineligible refund rate alerts</span></CardTitle>
+                      </CardHeader>
+                      <CardContent className="p-0">
+                        {aqData.flags.length === 0 ? (
+                          <div className="p-4"><EmptyState title="No flags" description="No agents flagged under current filter." /></div>
+                        ) : (
+                          <>
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-xs">
+                                <thead>
+                                  <tr className="border-b border-surface-border text-left text-subtle">
+                                    <th className="py-2 px-3">Agent ID</th>
+                                    <th className="py-2 px-3">Flagged At</th>
+                                    <th className="py-2 px-3 text-right">Tickets</th>
+                                    <th className="py-2 px-3 text-right">Refund Rate</th>
+                                    <th className="py-2 px-3 text-right">Manual Rev.</th>
+                                    <th className="py-2 px-3">Reason</th>
+                                    <th className="py-2 px-3">Status</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-surface-border">
+                                  {aqData.flags.map((f) => (
+                                    <tr key={`${f.agent_id}-${f.flagged_at}`} className="hover:bg-surface-card/50">
+                                      <td className="py-2 px-3 font-mono text-brand-400">{f.agent_id}</td>
+                                      <td className="py-2 px-3 text-muted">{new Date(f.flagged_at).toLocaleDateString()}</td>
+                                      <td className="py-2 px-3 text-right">{f.total_tickets}</td>
+                                      <td className="py-2 px-3 text-right">
+                                        <span className={f.refund_rate > 0.35 ? 'text-red-400 font-mono' : 'font-mono'}>{formatPercent(f.refund_rate)}</span>
+                                      </td>
+                                      <td className="py-2 px-3 text-right">{f.manual_review_count}</td>
+                                      <td className="py-2 px-3 text-muted text-[11px]">{f.flag_reason}</td>
+                                      <td className="py-2 px-3">
+                                        {f.resolved
+                                          ? <span className="text-green-400">Resolved</span>
+                                          : <span className="text-red-400">Open</span>}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            {aqData.total_pages > 1 && (
+                              <PaginationBar page={aqPage} totalPages={aqData.total_pages} onPageChange={setAqPage} total={aqData.total_flags} pageSize={50} />
+                            )}
+                          </>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    {/* Per-agent QA scores */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Per-Agent QA Scores  <span className="text-xs font-normal text-subtle ml-2">conversation quality</span></CardTitle>
+                      </CardHeader>
+                      <CardContent className="p-0">
+                        {aqData.qa_summary.length === 0 ? (
+                          <div className="p-4"><EmptyState title="No QA scores yet" description="Scores will appear after the QA scorer processes closed conversations." /></div>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="border-b border-surface-border text-left text-subtle">
+                                  <th className="py-2 px-3">Agent ID</th>
+                                  <th className="py-2 px-3 text-right">Scored</th>
+                                  <th className="py-2 px-3 text-right">Avg QA</th>
+                                  <th className="py-2 px-3 text-right">Canned Ratio</th>
+                                  <th className="py-2 px-3 text-right">Grammar Err</th>
+                                  <th className="py-2 px-3 text-right">Flagged</th>
+                                  <th className="py-2 px-3">Last Scored</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-surface-border">
+                                {aqData.qa_summary.map((s) => (
+                                  <tr key={s.agent_id} className="hover:bg-surface-card/50">
+                                    <td className="py-2 px-3 font-mono text-brand-400">{s.agent_id}</td>
+                                    <td className="py-2 px-3 text-right">{s.total_scored}</td>
+                                    <td className="py-2 px-3 text-right">
+                                      <span className={s.avg_qa_score < 0.5 ? 'text-red-400 font-mono' : s.avg_qa_score > 0.75 ? 'text-green-400 font-mono' : 'font-mono'}>
+                                        {formatPercent(s.avg_qa_score)}
+                                      </span>
+                                    </td>
+                                    <td className="py-2 px-3 text-right">
+                                      <span className={s.avg_canned_ratio > 0.4 ? 'text-amber-400 font-mono' : 'font-mono'}>{formatPercent(s.avg_canned_ratio)}</span>
+                                    </td>
+                                    <td className="py-2 px-3 text-right font-mono">{s.avg_grammar_errors.toFixed(1)}</td>
+                                    <td className="py-2 px-3 text-right">
+                                      {s.flagged_count > 0 ? <span className="text-red-400">{s.flagged_count}</span> : <span className="text-green-400">0</span>}
+                                    </td>
+                                    <td className="py-2 px-3 text-muted">{new Date(s.last_scored_at).toLocaleDateString()}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </div>
+                </>
+              )}
             </div>
           )}
 

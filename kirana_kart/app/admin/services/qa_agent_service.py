@@ -265,6 +265,20 @@ def retrieve_kb_evidence(context: dict) -> dict:
 
         wvc = WeaviateClient()
 
+        # If ticket has no policy_version, fall back to currently active KB version
+        if not policy_version:
+            try:
+                from app.admin.db import get_db_session
+                from sqlalchemy import text as _text
+                with get_db_session() as _s:
+                    row = _s.execute(
+                        _text("SELECT active_version FROM kirana_kart.kb_runtime_config ORDER BY id DESC LIMIT 1")
+                    ).mappings().first()
+                    if row:
+                        policy_version = row["active_version"]
+            except Exception:
+                pass
+
         rules: list = []
         if policy_version:
             rules = wvc.query_similar_rules(

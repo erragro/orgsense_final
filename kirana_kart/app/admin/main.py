@@ -147,7 +147,13 @@ app = FastAPI(
 # CORS for UI — allow credentials (needed for Authorization header)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url, "http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[
+        settings.frontend_url,
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        # Allow any localhost port (Vite preview, dev tools)
+        *[f"http://localhost:{p}" for p in range(51000, 51200)],
+        *[f"http://127.0.0.1:{p}" for p in range(51000, 51200)],
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
