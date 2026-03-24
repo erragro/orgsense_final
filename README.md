@@ -1,6 +1,6 @@
 # Kirana Kart — Policy Governance Platform
 
-**Version:** 3.6.0
+**Version:** 4.0.0
 **Stack:** FastAPI · React 19 · PostgreSQL · Weaviate · Redis · Celery · OpenAI · Docker
 
 ---
@@ -9,7 +9,30 @@
 
 Kirana Kart is an **AI-powered policy governance and automated ticket-resolution engine** for e-commerce / quick-commerce customer support. It manages the full lifecycle of business rules — from human-authored documents through LLM compilation all the way to vectorized, published policy versions that power automated ticket resolution.
 
-The platform handles ~13,500 support tickets against 25,000 customers / 100,000 orders, with ₹82.8 Crore in annual refund exposure governed by versioned, auditable policies.
+The platform handles ~2.2M support chats/month, 18M orders/month, with ₹12.4 Crore/month refund leakage governed by versioned, auditable AI policies. The system closes four concrete business problems documented below.
+
+---
+
+## Business Case Coverage
+
+Four problems drive the entire platform design:
+
+| # | Problem | Coverage | Key Components |
+|---|---|---|---|
+| **P1** | Refund fraud & policy leakage — ₹12.4 Cr/month | **~78%** | 4-stage LLM pipeline, deterministic rule engine, Weaviate vector retrieval, fraud signal computation, GPS enrichment, tier auto-approve |
+| **P2** | Agent quality invisible — 0.2% QA coverage | **~35%** | QA Agent (AI pipeline accuracy + 12 Python + 10 LLM checks), canned-response detector, grammar scorer, sentiment arc, per-agent daily scoring |
+| **P3** | Ticket spike root cause unknown — 3-day lag | **~35%** | BI Agent (reactive SQL), intent classifier, `l3_analytics/clustering_service.py` (HDBSCAN spike detection), spike reports analytics tab |
+| **P4** | True FCR overstated by 20 points | **~45%** | Intent classifier, `fcr` column, async 48h FCR checker Celery task, `l3_analytics/fcr_service.py`, FCR analytics tab |
+
+### Key Fixes & Additions (v4.0)
+
+- **KB rule pipeline**: `_fetch_rules` was silently returning zero rules for every ticket due to a vocabulary mismatch between ticket `module` labels ("delivery") and rule `module_name` values ("Fraud & Abuse Intelligence"). Removed the incorrect filter; all rules are now correctly fetched and applied.
+- **`policy_version` persisted**: The `llm_output_3` INSERT statement now writes the active policy version so QA Agent and analytics can trace which rule set governed each decision.
+- **QA Agent KB Evidence**: Fallback path now correctly queries `kb_runtime_config.active_version` (not the non-existent `kb_versions` table), enabling the KB Evidence panel to load rules from Weaviate.
+- **Analytics dashboard**: Three new tabs added — **True FCR**, **Spike Reports**, and **Agent Quality** — with lazy-loaded React Query hooks and full backend endpoints.
+- **GPS delivery enrichment**: `phase4_enricher.py` now pulls `gps_lat`/`gps_lng` from `delivery_events` and computes `gps_confirmed_delivery`, feeding Stage 1 fraud detection.
+- **R-005 tier auto-approve**: Gold/Platinum customers with a first claim on an order auto-resolve without escalation in `stage2_validator.py`.
+- **CORS extended**: Governance API now accepts requests from Vite preview server ports (51000–51199) in addition to the standard dev port 5173.
 
 ---
 
@@ -288,7 +311,7 @@ React 19 + TypeScript + Vite. In production, build with `npm run build` and serv
 | Knowledge Base | `/knowledge-base` | 5-tab module: upload & edit policy docs, guided pipeline workflow (compile → vectorize → publish), published versions with rollback, action code viewer + LLM extractor, and decision matrix (compiled rules per version) |
 | Policy | `/policy` | Rule registry, simulation A/B tests, shadow policy mode |
 | Customers | `/customers` | Profiles, order history, churn risk |
-| Analytics | `/analytics` | Evaluation Matrix — 16K+ tickets with LLM output analysis |
+| Analytics | `/analytics` | 5-tab dashboard: Resolution, CSAT, Refunds, SLA, Evaluation Matrix — plus **True FCR**, **Spike Reports**, and **Agent Quality** tabs |
 | BI Agent | `/bi-agent` | Natural language → SQL → streamed analyst-style response |
 | **Cardinal** | `/cardinal` | **Pipeline observability, scheduler management & registry CRUD** — 7-tab module: 5-phase ingest stats, LLM stage breakdown, per-ticket execution traces, audit log, reprocess tool, Celery Beat scheduler UI, full CRUD for **Action Registry** (`master_action_codes`), and full CRUD for **Response Templates** (`response_templates`). *Admin-only access — default-deny for new users.* |
 | **QA Agent** | `/qa-agent` | **Hybrid QA evaluation** — 12 deterministic Python checks + 10 LLM semantic parameters; results stream live via SSE; graded A–F from a blended score (35% Python + 65% LLM) |

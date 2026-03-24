@@ -94,6 +94,17 @@ def run(
     if complaints_30d and int(complaints_30d) >= 5:
         greedy_signals += 1
 
+    # R-003: GPS confirms delivery but customer claims non-receipt (policy violation)
+    gps_confirmed_delivery = bool(order_ctx.get("gps_confirmed_delivery", False))
+    delivery_status        = (order_ctx.get("delivery_status") or "unknown").lower()
+    issue_l2               = (stage0_result.get("issue_type_l2") or "").lower()
+    if (
+        gps_confirmed_delivery
+        and delivery_status == "delivered"
+        and any(kw in issue_l2 for kw in ("not_received", "not received", "missing", "undelivered"))
+    ):
+        greedy_signals += 1  # GPS-confirmed delivery + non-receipt claim = R-003 signal
+
     if greedy_signals >= 2:
         greedy_classification = "FRAUD"
     elif greedy_signals == 1:
