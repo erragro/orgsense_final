@@ -14,13 +14,39 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from contextlib import contextmanager
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 
-from app.admin.db import get_db_session
+from app.config import settings
 
 logger = logging.getLogger("kirana_kart.schema_loader")
+
+# ── Read-only engine for schema introspection (bi_readonly credentials) ────────
+# Uses the same restricted role as BI query execution so the schema
+# summary only describes tables/columns the BI agent can actually query.
+_schema_engine = create_engine(
+    settings.bi_database_url,
+    pool_size=2,
+    max_overflow=2,
+    pool_pre_ping=True,
+)
+_SchemaSession = sessionmaker(bind=_schema_engine, autocommit=False, autoflush=False)
+
+
+@contextmanager
+def _schema_session():
+    session = _SchemaSession()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 # Only include these 11 operational tables in the schema (everything else is
 # internal governance / AI / policy content and must not appear in the schema)
@@ -91,7 +117,7 @@ def invalidate_cache() -> None:
 # ── Internal builder ──────────────────────────────────────────────────────────
 
 def _build() -> str:
-    with get_db_session() as session:
+    with _schema_session() as session:
 
         # 1. All columns (excluding internal tables)
         col_rows = session.execute(text("""
@@ -129,13 +155,44 @@ def _build() -> str:
               AND tc.table_schema    = 'kirana_kart'
         """)).mappings().all()
 
-        # 4. Approximate row counts
-        cnt_rows = session.execute(text("""
-            SELECT relname AS table_name,
-                   n_live_tup::bigint AS row_count
-            FROM pg_stat_user_tables
-            WHERE schemaname = 'kirana_kart'
-        """)).mappings().all()
+        # 4. Approximate row counts — pg_stat_user_tables requires pg_monitor;
+        #    gracefully degrade to 0 if bi_readonly lacks that privilege.
+        try:
+            cnt_rows = session.execute(text("""
+                SELECT relname AS table_name,
+                       n_live_tup::bigint AS row_count
+                FROM pg_stat_user_tables
+                WHERE schemaname = 'kirana_kart'
+            """)).mappings().all()
+        except Exception:
+            logger.debug("pg_stat_user_tables not accessible — row counts skipped")
+            cnt_rows = []
+
+        # 5. Column comments from pg_description (available once COMMENT ON COLUMN is set)
+        try:
+            comment_rows = session.execute(text("""
+                SELECT c.table_name,
+                       c.column_name,
+                       pgd.description
+                FROM information_schema.columns c
+                JOIN pg_class cls
+                  ON cls.relname = c.table_name
+                JOIN pg_namespace ns
+                  ON ns.nspname = c.table_schema
+                 AND ns.oid = cls.relnamespace
+                LEFT JOIN pg_attribute attr
+                  ON attr.attrelid = cls.oid
+                 AND attr.attname  = c.column_name
+                LEFT JOIN pg_description pgd
+                  ON pgd.objoid    = cls.oid
+                 AND pgd.objsubid  = attr.attnum
+                WHERE c.table_schema = 'kirana_kart'
+                  AND pgd.description IS NOT NULL
+                ORDER BY c.table_name, c.ordinal_position
+            """)).mappings().all()
+        except Exception:
+            logger.debug("pg_description not accessible — column comments skipped")
+            comment_rows = []
 
     # ── Organise ──────────────────────────────────────────────────────────────
     table_cols: dict[str, list[dict]] = defaultdict(list)
@@ -153,6 +210,12 @@ def _build() -> str:
 
     row_counts: dict[str, int] = {r["table_name"]: r["row_count"] for r in cnt_rows}
 
+    # Column comments map: table → column → description
+    col_comments: dict[str, dict[str, str]] = defaultdict(dict)
+    for r in comment_rows:
+        if r["description"]:
+            col_comments[r["table_name"]][r["column_name"]] = r["description"]
+
     # Ordered tables
     ordered = [t for t in _ORDER if t in table_cols]
     ordered += sorted(t for t in table_cols if t not in _ORDER)
@@ -160,7 +223,7 @@ def _build() -> str:
     # ── Fetch sample values for low-cardinality varchar/text columns ──────────
     sample_vals: dict[str, dict[str, list]] = {t: {} for t in ordered}
 
-    with get_db_session() as session:
+    with _schema_session() as session:
         for tname in ordered:
             varchar_cols = [
                 c["column_name"]
@@ -236,7 +299,9 @@ def _build() -> str:
             sv_note = f"  ({' | '.join(str(v) for v in sv)})" if sv else ""
 
             flag_note = f"  [{', '.join(flags)}]" if flags else ""
-            lines.append(f"   {cname:<38}{type_label:<18}{flag_note}{sv_note}")
+            comment = col_comments[tname].get(cname)
+            comment_note = f"  -- {comment}" if comment else ""
+            lines.append(f"   {cname:<38}{type_label:<18}{flag_note}{sv_note}{comment_note}")
 
         lines.append("")
 

@@ -184,12 +184,11 @@ class CompilerService:
 
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
-            action_map = self._load_action_map(cur)
+            action_registry = self._load_action_registry(cur)
 
-        structured_json = self._call_llm(
-            markdown,
-            list(action_map.keys())
-        )
+        action_map = {r["action_code_id"]: r["id"] for r in action_registry}
+
+        structured_json = self._call_llm(markdown, action_registry)
 
         self._validate_structure(structured_json)
 
@@ -241,52 +240,103 @@ class CompilerService:
 
 
     # --------------------------------------------------------
-    # LOAD ACTION MAP
+    # LOAD ACTION REGISTRY (full details)
+    # --------------------------------------------------------
+
+    def _load_action_registry(self, cur) -> List[dict]:
+        """Return full action registry rows for LLM context and map building."""
+
+        cur.execute("""
+            SELECT id, action_code_id, action_name, action_description,
+                   requires_refund, requires_escalation, automation_eligible
+            FROM kirana_kart.master_action_codes
+            ORDER BY action_code_id
+        """)
+
+        return cur.fetchall()
+
+
+    # --------------------------------------------------------
+    # LOAD ACTION MAP (id lookup — kept for insert validation)
     # --------------------------------------------------------
 
     def _load_action_map(self, cur) -> Dict[str, int]:
+        return {r["action_code_id"]: r["id"] for r in self._load_action_registry(cur)}
 
-        cur.execute("""
-            SELECT id, action_code_id
-            FROM kirana_kart.master_action_codes
-        """)
 
-        rows = cur.fetchall()
+    # --------------------------------------------------------
+    # BUILD RICH ACTION BLOCK for LLM prompt
+    # --------------------------------------------------------
 
-        action_map = {}
+    def _build_action_block(self, action_registry: List[dict]) -> str:
+        """
+        Formats the action registry into a human-readable table for the LLM.
+        Includes code, name, description, and behavioural flags so the model
+        can make semantically correct assignments without guessing.
+        """
 
-        for r in rows:
-            action_map[r["action_code_id"]] = r["id"]
+        lines = [
+            "ALLOWED ACTION CODES",
+            "=" * 72,
+            "You MUST select action_code_id ONLY from this list.",
+            "Each row: CODE | Name | Description | [flags]",
+            "",
+        ]
 
-        return action_map
+        for ac in action_registry:
+            code  = ac["action_code_id"]
+            name  = ac["action_name"] or "—"
+            desc  = ac["action_description"] or "No description provided."
+
+            flags = []
+            if ac.get("requires_refund"):
+                flags.append("issues_refund")
+            if ac.get("requires_escalation"):
+                flags.append("requires_human_review")
+            if ac.get("automation_eligible"):
+                flags.append("fully_automatable")
+
+            flag_str = f"  [{', '.join(flags)}]" if flags else ""
+            lines.append(f"  {code:<30} | {name:<30} | {desc}{flag_str}")
+
+        lines += [
+            "",
+            "ASSIGNMENT RULES:",
+            "  - Read the rule's intent carefully against each code's name and description.",
+            "  - Prefer the most specific matching code over a generic one.",
+            "  - Never assign a code whose description contradicts the rule's intent.",
+            "  - If no code fits, omit the rule entirely (do NOT invent a code).",
+        ]
+
+        return "\n".join(lines)
 
 
     # --------------------------------------------------------
     # LLM CALL
     # --------------------------------------------------------
 
-    def _call_llm(self, markdown: str, valid_actions: List[str]):
+    def _call_llm(self, markdown: str, action_registry: List[dict]):
 
-        action_list = "\n".join(valid_actions)
+        action_block = self._build_action_block(action_registry)
 
         prompt = f"""
-You are a deterministic policy compiler.
+You are a deterministic policy compiler for Kirana Kart, a quick-commerce customer support platform.
+
+Your task: parse the KB document below and extract structured policy rules in JSON.
 
 STRICT RULES:
-
-1. Every rule MUST contain an action_code_id.
-2. action_code_id MUST be selected ONLY from the allowed list below.
-3. DO NOT invent action codes.
+1. Every rule MUST contain an action_code_id chosen from the ALLOWED ACTION CODES list.
+2. Use the code's Name and Description to determine the correct assignment — do NOT guess by name alone.
+3. DO NOT invent action codes not in the list.
 4. DO NOT return null action_code_id.
-5. If a rule cannot map to a valid action_code_id, DO NOT generate that rule.
+5. If a rule cannot map to any valid action_code_id, skip that rule entirely.
+6. conditions must capture the factual trigger criteria from the document (e.g. order_value, issue_type, repeat_count).
+7. Populate numeric fields (min_order_value, max_order_value, etc.) from explicit thresholds in the document.
+8. Set deterministic=true only when the document states the outcome is automatic/unconditional.
 
-Allowed action_code_id values:
+{action_block}
 
-{action_list}
-
-Return STRICT JSON.
-
-Schema:
+Return STRICT JSON matching this schema exactly:
 
 {{
  "modules":[
@@ -338,7 +388,7 @@ Document:
             temperature=0,
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": "Return strict JSON only."},
+                {"role": "system", "content": "You are a deterministic policy compiler. Return strict JSON only."},
                 {"role": "user", "content": prompt}
             ]
 

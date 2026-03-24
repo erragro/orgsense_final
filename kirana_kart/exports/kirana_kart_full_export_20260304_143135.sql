@@ -3703,6 +3703,13 @@ ALTER TABLE ONLY kirana_kart.llm_output_3
 ALTER TABLE ONLY kirana_kart.master_action_codes
     ADD CONSTRAINT master_action_codes_pkey PRIMARY KEY (id);
 
+--
+-- Name: master_action_codes uq_master_action_codes_action_code_id; Type: CONSTRAINT; Schema: kirana_kart; Owner: orguser
+--
+
+ALTER TABLE ONLY kirana_kart.master_action_codes
+    ADD CONSTRAINT uq_master_action_codes_action_code_id UNIQUE (action_code_id);
+
 
 --
 -- Name: model_registry model_registry_pk; Type: CONSTRAINT; Schema: kirana_kart; Owner: orguser
