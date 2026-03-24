@@ -756,6 +756,29 @@ def ensure_schedule_table() -> None:
         logger.error("Failed to ensure cardinal_beat_schedule: %s", exc)
 
 
+def ensure_master_action_codes_constraints() -> None:
+    """Idempotently add UNIQUE constraint on master_action_codes.action_code_id."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.table_constraints
+                        WHERE constraint_schema = 'kirana_kart'
+                          AND constraint_name = 'uq_master_action_codes_action_code_id'
+                    ) THEN
+                        ALTER TABLE kirana_kart.master_action_codes
+                            ADD CONSTRAINT uq_master_action_codes_action_code_id UNIQUE (action_code_id);
+                    END IF;
+                END $$;
+            """))
+            conn.commit()
+        logger.info("master_action_codes constraints ensured.")
+    except Exception as exc:
+        logger.warning("ensure_master_action_codes_constraints: %s", exc)
+
+
 # ============================================================
 # SCHEDULER REQUEST MODELS
 # ============================================================

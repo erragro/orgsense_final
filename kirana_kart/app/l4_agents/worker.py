@@ -406,12 +406,20 @@ def process_ticket(
         _update_stage_status(execution_id, ticket_id, stage=2, status="completed")
 
         # ----------------------------------------------------------
-        # Stage 3: Response generation (HITL cases only)
-        # For AUTO_RESOLVED tickets, dispatch is complete after stage 2 —
-        # stage 3 is marked completed immediately without running the LLM.
+        # Stage 3: Response generation
+        #
+        # HITL only  — generate a draft response for the human agent
+        #              who will review and approve the monetary action.
+        #
+        # AUTO_RESOLVED — no response needed; ticket closes automatically.
+        #
+        # MANUAL_REVIEW — do NOT generate an automated response; the
+        #                  agent must handle it directly (no email sent).
         # ----------------------------------------------------------
         stage3_result = None
-        if stage2_result.get("requires_human_review"):
+        automation_pathway = stage2_result.get("automation_pathway", "AUTO_RESOLVED")
+
+        if automation_pathway == "HITL":
             _update_stage_status(execution_id, ticket_id, stage=3, status="running")
             stage3_result = _run_stage_3(
                 ticket_id=ticket_id,
@@ -423,7 +431,7 @@ def process_ticket(
             )
             _update_stage_status(execution_id, ticket_id, stage=3, status="completed")
         else:
-            # AUTO_RESOLVED — no response generation needed; mark dispatch complete
+            # AUTO_RESOLVED or MANUAL_REVIEW — skip response generation
             _update_stage_status(execution_id, ticket_id, stage=3, status="completed")
 
         # ----------------------------------------------------------
@@ -776,17 +784,60 @@ def _run_stage_2(
                         final_refund_amount,
                         logic_validation_status,
                         validated_calculated_gratification,
-                        automation_pathway
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        automation_pathway,
+                        validation_standard_logic,
+                        validation_lifetime_igcc,
+                        validation_exceptions_60d,
+                        validation_igcc_history,
+                        validation_same_issue,
+                        validation_greedy_check,
+                        validation_multiplier,
+                        validation_cap,
+                        validated_greedy_signals,
+                        validated_greedy_classification,
+                        discrepancy_detected,
+                        discrepancy_count,
+                        discrepancy_details,
+                        override_applied,
+                        override_reason,
+                        override_type,
+                        llm_overall_accuracy,
+                        detailed_reasoning
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s,
+                        %s, %s, %s,
+                        %s, %s, %s,
+                        %s, %s
+                    )
                     ON CONFLICT (ticket_id, execution_id) DO UPDATE SET
-                        order_id                         = EXCLUDED.order_id,
-                        llm_output_2_id                  = EXCLUDED.llm_output_2_id,
-                        final_action_code                = EXCLUDED.final_action_code,
-                        final_refund_amount              = EXCLUDED.final_refund_amount,
-                        logic_validation_status          = EXCLUDED.logic_validation_status,
+                        order_id                           = EXCLUDED.order_id,
+                        llm_output_2_id                    = EXCLUDED.llm_output_2_id,
+                        final_action_code                  = EXCLUDED.final_action_code,
+                        final_refund_amount                = EXCLUDED.final_refund_amount,
+                        logic_validation_status            = EXCLUDED.logic_validation_status,
                         validated_calculated_gratification = EXCLUDED.validated_calculated_gratification,
-                        automation_pathway               = EXCLUDED.automation_pathway,
-                        updated_at                       = CURRENT_TIMESTAMP
+                        automation_pathway                 = EXCLUDED.automation_pathway,
+                        validation_standard_logic          = EXCLUDED.validation_standard_logic,
+                        validation_lifetime_igcc           = EXCLUDED.validation_lifetime_igcc,
+                        validation_exceptions_60d          = EXCLUDED.validation_exceptions_60d,
+                        validation_igcc_history            = EXCLUDED.validation_igcc_history,
+                        validation_same_issue              = EXCLUDED.validation_same_issue,
+                        validation_greedy_check            = EXCLUDED.validation_greedy_check,
+                        validation_multiplier              = EXCLUDED.validation_multiplier,
+                        validation_cap                     = EXCLUDED.validation_cap,
+                        validated_greedy_signals           = EXCLUDED.validated_greedy_signals,
+                        validated_greedy_classification    = EXCLUDED.validated_greedy_classification,
+                        discrepancy_detected               = EXCLUDED.discrepancy_detected,
+                        discrepancy_count                  = EXCLUDED.discrepancy_count,
+                        discrepancy_details                = EXCLUDED.discrepancy_details,
+                        override_applied                   = EXCLUDED.override_applied,
+                        override_reason                    = EXCLUDED.override_reason,
+                        override_type                      = EXCLUDED.override_type,
+                        llm_overall_accuracy               = EXCLUDED.llm_overall_accuracy,
+                        detailed_reasoning                 = EXCLUDED.detailed_reasoning,
+                        updated_at                         = CURRENT_TIMESTAMP
                     RETURNING id
                     """,
                     (
@@ -799,6 +850,24 @@ def _run_stage_2(
                         result["validation_status"],
                         result["final_refund_amount"],
                         result["automation_pathway"],
+                        stage2.get("validation_standard_logic"),
+                        stage2.get("validation_lifetime_igcc"),
+                        stage2.get("validation_exceptions_60d"),
+                        stage2.get("validation_igcc_history"),
+                        stage2.get("validation_same_issue"),
+                        stage2.get("validation_greedy_check"),
+                        stage2.get("validation_multiplier"),
+                        stage2.get("validation_cap"),
+                        stage2.get("validated_greedy_signals"),
+                        stage2.get("validated_greedy_classification"),
+                        stage2.get("discrepancy_detected", False),
+                        stage2.get("discrepancy_count", 0),
+                        stage2.get("discrepancy_details"),
+                        stage2.get("override_applied", False),
+                        stage2.get("override_reason"),
+                        stage2.get("override_type"),
+                        stage2.get("llm_overall_accuracy"),
+                        stage2.get("reasoning"),
                     ),
                 )
                 row = cur.fetchone()
@@ -1093,7 +1162,11 @@ def _write_complaint(
                         fields.get("escalation_group", "STANDARD"),
                         stage2.get("final_action_code"),
                         stage2.get("final_refund_amount"),
-                        "resolved" if not stage2.get("requires_human_review") else "pending_review",
+                        {
+                            "AUTO_RESOLVED": "resolved",
+                            "HITL":          "pending_review",
+                            "MANUAL_REVIEW": "manual_review",
+                        }.get(stage2.get("automation_pathway", "AUTO_RESOLVED"), "pending_review"),
                         stage1.get("fraud_segment", "NORMAL"),
                         fields.get("active_policy"),
                         datetime.now(timezone.utc),
