@@ -1,725 +1,1516 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Zap, Plus, Play, Pause, Trash2, Eye, ChevronDown, ChevronUp,
-  AlertTriangle, CheckCircle2, X, ArrowRight, ToggleLeft, ToggleRight,
-  Sparkles,
+  Plus, Pencil, Copy, Trash2, X, Zap, Search,
+  ChevronUp, ChevronDown, PlayCircle,
+  ToggleLeft, ToggleRight, AlertTriangle,
+  Clock, Ticket, Edit3, Bell, CheckSquare, Square,
 } from 'lucide-react'
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
+import { Select } from '@/components/ui/Select'
+import { Textarea } from '@/components/ui/Textarea'
+import { Badge } from '@/components/ui/Badge'
+import { Card, CardContent } from '@/components/ui/Card'
+import { Spinner } from '@/components/ui/Spinner'
+import { Switch } from '@/components/ui/Switch'
 import { crmApi } from '@/api/governance/crm.api'
-import { useAuthStore } from '@/stores/auth.store'
-import type { AutomationRule, RuleCondition, RuleAction } from '@/types/crm.types'
+import { toast } from '@/stores/toast.store'
+import { cn } from '@/lib/cn'
+import type { AutomationRule, RuleCondition, RuleAction, AgentSummary, Group } from '@/types/crm.types'
 
-const TRIGGER_COLORS: Record<string, string> = {
-  TICKET_CREATED: 'bg-green-500/10 text-green-400 border-green-500/20',
-  TICKET_UPDATED: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  SLA_WARNING:    'bg-amber-500/10 text-amber-400 border-amber-500/20',
-  SLA_BREACHED:   'bg-red-500/10 text-red-400 border-red-500/20',
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+type TriggerEvent = 'TICKET_CREATED' | 'TICKET_UPDATED' | 'SLA_WARNING' | 'SLA_BREACHED' | 'TIME_BASED'
+type FilterTab = 'all' | 'event' | 'time' | 'disabled'
+type SortColumn = 'priority' | 'name' | 'run_count' | 'last_run_at'
+type SortDir = 'asc' | 'desc'
+
+interface TriggerMeta {
+  label: string
+  icon: React.ReactNode
+  badgeVariant: 'green' | 'blue' | 'amber' | 'red' | 'purple'
+  description: string
 }
 
-const TRIGGER_LABELS: Record<string, string> = {
-  TICKET_CREATED: 'Ticket Created',
-  TICKET_UPDATED: 'Ticket Updated',
-  SLA_WARNING:    'SLA Warning',
-  SLA_BREACHED:   'SLA Breached',
+const TRIGGER_META: Record<TriggerEvent, TriggerMeta> = {
+  TICKET_CREATED: {
+    label: 'Ticket Created',
+    icon: <Ticket className="w-4 h-4" />,
+    badgeVariant: 'green',
+    description: 'When a new ticket enters the queue',
+  },
+  TICKET_UPDATED: {
+    label: 'Ticket Updated',
+    icon: <Edit3 className="w-4 h-4" />,
+    badgeVariant: 'blue',
+    description: 'When any field on a ticket changes',
+  },
+  SLA_WARNING: {
+    label: 'SLA Warning',
+    icon: <Bell className="w-4 h-4" />,
+    badgeVariant: 'amber',
+    description: '15 minutes before SLA deadline',
+  },
+  SLA_BREACHED: {
+    label: 'SLA Breached',
+    icon: <AlertTriangle className="w-4 h-4" />,
+    badgeVariant: 'red',
+    description: 'When SLA deadline is exceeded',
+  },
+  TIME_BASED: {
+    label: 'Time-Based',
+    icon: <Clock className="w-4 h-4" />,
+    badgeVariant: 'purple',
+    description: 'X hours/minutes after a condition',
+  },
 }
 
-const ACTION_LABELS: Record<string, string> = {
-  assign_to_group:  'Assign to Group',
-  assign_to_agent:  'Assign to Agent',
-  change_priority:  'Change Priority',
-  change_queue_type:'Change Queue Type',
-  add_tag:          'Add Tag',
-  change_status:    'Change Status',
-  send_notification:'Send Notification',
-  escalate:         'Escalate',
+const CONDITION_FIELDS = [
+  { value: 'queue_type',          label: 'Queue Type' },
+  { value: 'status',              label: 'Status' },
+  { value: 'priority',            label: 'Priority' },
+  { value: 'customer_segment',    label: 'Customer Segment' },
+  { value: 'ai_action_code',      label: 'AI Action Code' },
+  { value: 'ai_confidence',       label: 'AI Confidence' },
+  { value: 'ai_fraud_segment',    label: 'AI Fraud Segment' },
+  { value: 'ai_refund_amount',    label: 'AI Refund Amount' },
+  { value: 'automation_pathway',  label: 'Automation Pathway' },
+  { value: 'hours_since_created', label: 'Hours Since Created' },
+  { value: 'hours_since_updated', label: 'Hours Since Updated' },
+]
+
+const ENUM_VALUES: Record<string, string[]> = {
+  queue_type: ['STANDARD_REVIEW', 'SENIOR_REVIEW', 'SLA_BREACH_REVIEW', 'ESCALATION_QUEUE', 'MANUAL_REVIEW'],
+  status: ['OPEN', 'IN_PROGRESS', 'PENDING_CUSTOMER', 'ESCALATED', 'RESOLVED', 'CLOSED'],
+  priority: ['1', '2', '3', '4'],
+  ai_fraud_segment: ['LOW', 'MEDIUM', 'HIGH', 'VERY_HIGH'],
+  automation_pathway: ['HITL', 'MANUAL_REVIEW'],
 }
 
-const PRIORITY_LABELS: Record<string, string> = { '1': 'Critical', '2': 'High', '3': 'Normal', '4': 'Low' }
+const PRIORITY_LABEL: Record<string, string> = {
+  '1': '1 - Critical',
+  '2': '2 - High',
+  '3': '3 - Normal',
+  '4': '4 - Low',
+}
 
-function ConditionRow({
-  condition,
-  onChange,
-  onRemove,
-  schema,
-}: {
-  condition: RuleCondition
-  onChange: (c: RuleCondition) => void
-  onRemove: () => void
-  schema: any
-}) {
+const NUMERIC_FIELDS = new Set(['ai_confidence', 'ai_refund_amount', 'hours_since_created', 'hours_since_updated'])
+
+const STRING_OPERATORS = [
+  { value: 'is',         label: 'is' },
+  { value: 'is_not',     label: 'is not' },
+  { value: 'contains',   label: 'contains' },
+  { value: 'is_one_of',  label: 'is one of' },
+]
+
+const NUMERIC_OPERATORS = [
+  { value: 'is',                     label: 'is' },
+  { value: 'is_not',                 label: 'is not' },
+  { value: 'greater_than',           label: 'greater than' },
+  { value: 'less_than',              label: 'less than' },
+  { value: 'greater_than_or_equal',  label: 'greater than or equal' },
+  { value: 'less_than_or_equal',     label: 'less than or equal' },
+]
+
+const ACTION_TYPES = [
+  { value: 'assign_to_group',   label: 'Assign to Group' },
+  { value: 'assign_to_agent',   label: 'Assign to Agent' },
+  { value: 'change_priority',   label: 'Change Priority' },
+  { value: 'change_queue_type', label: 'Change Queue Type' },
+  { value: 'change_status',     label: 'Change Status' },
+  { value: 'add_tag',           label: 'Add Tag' },
+  { value: 'send_notification', label: 'Send Notification' },
+  { value: 'escalate',          label: 'Escalate' },
+]
+
+const QUEUE_TYPE_OPTIONS = ENUM_VALUES.queue_type.map(v => ({ value: v, label: v.replace(/_/g, ' ') }))
+const STATUS_OPTIONS      = ENUM_VALUES.status.map(v => ({ value: v, label: v.replace(/_/g, ' ') }))
+const PRIORITY_OPTIONS    = ['1', '2', '3', '4'].map(v => ({ value: v, label: PRIORITY_LABEL[v] }))
+
+const FILTER_TABS: { key: FilterTab; label: string }[] = [
+  { key: 'all',      label: 'All' },
+  { key: 'event',    label: 'Event-Based Triggers' },
+  { key: 'time',     label: 'Time-Based' },
+  { key: 'disabled', label: 'Disabled' },
+]
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface RuleFormState {
+  name: string
+  description: string
+  priority: number
+  is_active: boolean
+  trigger_event: TriggerEvent
+  time_based_amount: number
+  time_based_unit: 'hours' | 'minutes'
+  time_based_after: 'created' | 'updated' | 'first_response_due'
+  condition_logic: 'AND' | 'OR'
+  conditions: RuleCondition[]
+  actions: RuleAction[]
+}
+
+interface PreviewTicket {
+  id: number
+  subject: string | null
+  queue_type: string
+  status: string
+  priority: number
+  created_at: string
+}
+
+interface PreviewResult {
+  count: number
+  tickets: PreviewTicket[]
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function formatDate(iso: string | null): string {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function conditionsSummary(conditions: RuleCondition[], logic: string): string {
+  if (!conditions.length) return 'No conditions'
+  return `${conditions.length} condition${conditions.length !== 1 ? 's' : ''} (${logic})`
+}
+
+function actionsSummary(actions: RuleAction[]): string {
+  if (!actions.length) return 'No actions'
+  return `${actions.length} action${actions.length !== 1 ? 's' : ''}`
+}
+
+function blankForm(): RuleFormState {
+  return {
+    name: '',
+    description: '',
+    priority: 100,
+    is_active: true,
+    trigger_event: 'TICKET_CREATED',
+    time_based_amount: 2,
+    time_based_unit: 'hours',
+    time_based_after: 'created',
+    condition_logic: 'AND',
+    conditions: [],
+    actions: [],
+  }
+}
+
+function ruleToForm(rule: AutomationRule): RuleFormState {
+  return {
+    name: rule.name,
+    description: rule.description ?? '',
+    priority: rule.priority,
+    is_active: rule.is_active,
+    trigger_event: rule.trigger_event as TriggerEvent,
+    time_based_amount: 2,
+    time_based_unit: 'hours',
+    time_based_after: 'created',
+    condition_logic: rule.condition_logic,
+    conditions: rule.conditions.map(c => ({ ...c })),
+    actions: rule.actions.map(a => ({ ...a, params: { ...a.params } })),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// StatCard
+// ---------------------------------------------------------------------------
+
+function StatCard({ label, value, sub }: { label: string; value: number | string; sub?: string }) {
   return (
-    <div className="flex items-center gap-2">
-      <select
-        className="flex-1 bg-surface-2 border border-border rounded-lg px-2 py-1.5 text-xs text-text"
-        value={condition.field}
-        onChange={e => onChange({ ...condition, field: e.target.value })}
+    <Card className="flex-1 min-w-[140px]">
+      <CardContent className="py-4">
+        <p className="text-xs text-muted mb-1">{label}</p>
+        <p className="text-2xl font-bold text-foreground tabular-nums">{value}</p>
+        {sub && <p className="text-xs text-subtle mt-0.5">{sub}</p>}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// TriggerBadge
+// ---------------------------------------------------------------------------
+
+function TriggerBadge({ event }: { event: string }) {
+  const meta = TRIGGER_META[event as TriggerEvent]
+  if (!meta) return <Badge variant="gray">{event}</Badge>
+  return (
+    <Badge variant={meta.badgeVariant} className="flex items-center gap-1 whitespace-nowrap">
+      {meta.icon}
+      {meta.label}
+    </Badge>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ConditionRow
+// ---------------------------------------------------------------------------
+
+interface ConditionRowProps {
+  condition: RuleCondition
+  index: number
+  onChange: (updated: RuleCondition) => void
+  onRemove: () => void
+}
+
+function ConditionRow({ condition, index, onChange, onRemove }: ConditionRowProps) {
+  const isNumeric = NUMERIC_FIELDS.has(condition.field)
+  const isEnum    = Object.prototype.hasOwnProperty.call(ENUM_VALUES, condition.field)
+  const operators = isNumeric ? NUMERIC_OPERATORS : STRING_OPERATORS
+  const enumVals  = isEnum ? ENUM_VALUES[condition.field] : []
+
+  const handleFieldChange = (field: string) => {
+    onChange({ field, operator: 'is', value: '' })
+  }
+
+  return (
+    <div className="flex items-start gap-2">
+      <span className="mt-2 text-xs text-subtle w-5 text-right shrink-0">{index + 1}.</span>
+      <div className="flex-1 grid grid-cols-3 gap-2">
+        <Select
+          options={CONDITION_FIELDS}
+          placeholder="Select field…"
+          value={condition.field}
+          onChange={e => handleFieldChange(e.target.value)}
+        />
+        <Select
+          options={operators}
+          placeholder="Operator…"
+          value={condition.operator}
+          onChange={e => onChange({ ...condition, operator: e.target.value })}
+        />
+        {isEnum ? (
+          <Select
+            options={enumVals.map(v => ({
+              value: v,
+              label: condition.field === 'priority' ? (PRIORITY_LABEL[v] ?? v) : v.replace(/_/g, ' '),
+            }))}
+            placeholder="Select value…"
+            value={condition.value}
+            onChange={e => onChange({ ...condition, value: e.target.value })}
+          />
+        ) : (
+          <Input
+            type={isNumeric ? 'number' : 'text'}
+            placeholder={isNumeric ? '0' : 'Value…'}
+            value={condition.value}
+            onChange={e => onChange({ ...condition, value: e.target.value })}
+          />
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="mt-2 p-1 text-subtle hover:text-red-400 transition-colors shrink-0"
+        aria-label="Remove condition"
       >
-        <option value="">Field...</option>
-        {(schema?.fields || []).map((f: any) => (
-          <option key={f.key} value={f.key}>{f.label}</option>
-        ))}
-      </select>
-      <select
-        className="w-28 bg-surface-2 border border-border rounded-lg px-2 py-1.5 text-xs text-text"
-        value={condition.operator}
-        onChange={e => onChange({ ...condition, operator: e.target.value })}
-      >
-        <option value="">Op...</option>
-        {(schema?.operators || []).map((o: any) => (
-          <option key={o.key} value={o.key}>{o.label}</option>
-        ))}
-      </select>
-      <input
-        className="flex-1 bg-surface-2 border border-border rounded-lg px-2 py-1.5 text-xs text-text"
-        placeholder="Value"
-        value={condition.value}
-        onChange={e => onChange({ ...condition, value: e.target.value })}
-      />
-      <button onClick={onRemove} className="text-red-400 hover:text-red-300 p-1 shrink-0">
-        <X className="w-3.5 h-3.5" />
+        <X className="w-4 h-4" />
       </button>
     </div>
   )
 }
 
-function ActionRow({
-  action,
-  onChange,
-  onRemove,
-  schema,
-}: {
-  action: RuleAction
-  onChange: (a: RuleAction) => void
-  onRemove: () => void
-  schema: any
-}) {
-  const paramLabel = (k: string) =>
-    k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+// ---------------------------------------------------------------------------
+// ActionRow
+// ---------------------------------------------------------------------------
 
-  return (
-    <div className="bg-surface-2 rounded-lg p-3 border border-border">
-      <div className="flex items-center gap-2 mb-2">
-        <select
-          className="flex-1 bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-text"
-          value={action.action_type}
-          onChange={e => onChange({ ...action, action_type: e.target.value, params: {} })}
-        >
-          <option value="">Action type...</option>
-          {(schema?.action_types || []).map((a: any) => (
-            <option key={a.key} value={a.key}>{a.label}</option>
-          ))}
-        </select>
-        <button onClick={onRemove} className="text-red-400 hover:text-red-300 p-1 shrink-0">
-          <X className="w-3.5 h-3.5" />
-        </button>
-      </div>
-      {/* Dynamic param inputs */}
-      {action.action_type === 'change_priority' && (
-        <select
-          className="w-full bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-text"
-          value={action.params.priority || ''}
-          onChange={e => onChange({ ...action, params: { priority: parseInt(e.target.value) } })}
-        >
-          <option value="">Select priority...</option>
-          {Object.entries(PRIORITY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </select>
-      )}
-      {action.action_type === 'change_queue_type' && (
-        <select
-          className="w-full bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-text"
-          value={action.params.queue_type || ''}
-          onChange={e => onChange({ ...action, params: { queue_type: e.target.value } })}
-        >
-          <option value="">Select queue...</option>
-          {['STANDARD_REVIEW', 'SENIOR_REVIEW', 'SLA_BREACH_REVIEW', 'ESCALATION_QUEUE', 'MANUAL_REVIEW'].map(q => (
-            <option key={q} value={q}>{q.replace(/_/g, ' ')}</option>
-          ))}
-        </select>
-      )}
-      {action.action_type === 'change_status' && (
-        <select
-          className="w-full bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-text"
-          value={action.params.status || ''}
-          onChange={e => onChange({ ...action, params: { status: e.target.value } })}
-        >
-          <option value="">Select status...</option>
-          {['OPEN', 'IN_PROGRESS', 'PENDING_CUSTOMER', 'ESCALATED'].map(s => (
-            <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
-          ))}
-        </select>
-      )}
-      {action.action_type === 'add_tag' && (
-        <div className="flex gap-2">
-          <input
-            className="flex-1 bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-text"
-            placeholder="Tag name"
-            value={action.params.tag_name || ''}
+interface ActionRowProps {
+  action: RuleAction
+  index: number
+  groups: Group[]
+  agents: AgentSummary[]
+  onChange: (updated: RuleAction) => void
+  onRemove: () => void
+}
+
+function ActionRow({ action, index, groups, agents, onChange, onRemove }: ActionRowProps) {
+  const handleTypeChange = (type: string) => {
+    onChange({ action_type: type, params: {} })
+  }
+
+  const renderParams = () => {
+    switch (action.action_type) {
+      case 'assign_to_group':
+        return (
+          <Select
+            options={groups.map(g => ({ value: String(g.id), label: g.name }))}
+            placeholder="Select group…"
+            value={String(action.params.group_id ?? '')}
+            onChange={e => onChange({ ...action, params: { ...action.params, group_id: Number(e.target.value) } })}
+          />
+        )
+      case 'assign_to_agent':
+        return (
+          <Select
+            options={agents.map(a => ({ value: String(a.id), label: a.full_name }))}
+            placeholder="Select agent…"
+            value={String(action.params.agent_id ?? '')}
+            onChange={e => onChange({ ...action, params: { ...action.params, agent_id: Number(e.target.value) } })}
+          />
+        )
+      case 'change_priority':
+        return (
+          <Select
+            options={PRIORITY_OPTIONS}
+            placeholder="Select priority…"
+            value={String(action.params.priority ?? '')}
+            onChange={e => onChange({ ...action, params: { ...action.params, priority: Number(e.target.value) } })}
+          />
+        )
+      case 'change_queue_type':
+        return (
+          <Select
+            options={QUEUE_TYPE_OPTIONS}
+            placeholder="Select queue type…"
+            value={String(action.params.queue_type ?? '')}
+            onChange={e => onChange({ ...action, params: { ...action.params, queue_type: e.target.value } })}
+          />
+        )
+      case 'change_status':
+        return (
+          <Select
+            options={STATUS_OPTIONS}
+            placeholder="Select status…"
+            value={String(action.params.status ?? '')}
+            onChange={e => onChange({ ...action, params: { ...action.params, status: e.target.value } })}
+          />
+        )
+      case 'add_tag':
+        return (
+          <Input
+            placeholder="Tag name…"
+            value={String(action.params.tag_name ?? '')}
             onChange={e => onChange({ ...action, params: { ...action.params, tag_name: e.target.value } })}
           />
-          <input
-            type="color"
-            className="w-8 h-7 rounded border border-border bg-surface cursor-pointer"
-            value={action.params.tag_color || '#6B7280'}
-            onChange={e => onChange({ ...action, params: { ...action.params, tag_color: e.target.value } })}
+        )
+      case 'send_notification':
+        return (
+          <Input
+            placeholder="Notification message…"
+            value={String(action.params.message ?? '')}
+            onChange={e => onChange({ ...action, params: { ...action.params, message: e.target.value } })}
           />
-        </div>
-      )}
-      {action.action_type === 'assign_to_group' && (
-        <input
-          className="w-full bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-text"
-          placeholder="Group ID"
-          type="number"
-          value={action.params.group_id || ''}
-          onChange={e => onChange({ ...action, params: { group_id: parseInt(e.target.value) } })}
+        )
+      case 'escalate':
+        return <span className="flex items-center h-full text-xs text-subtle py-2 px-1">No additional params required.</span>
+      default:
+        return null
+    }
+  }
+
+  return (
+    <div className="flex items-start gap-2">
+      <span className="mt-2 text-xs text-subtle w-5 text-right shrink-0">{index + 1}.</span>
+      <div className="flex-1 grid grid-cols-2 gap-2">
+        <Select
+          options={ACTION_TYPES}
+          placeholder="Select action…"
+          value={action.action_type}
+          onChange={e => handleTypeChange(e.target.value)}
         />
-      )}
-      {action.action_type === 'assign_to_agent' && (
-        <input
-          className="w-full bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-text"
-          placeholder="Agent ID"
-          type="number"
-          value={action.params.agent_id || ''}
-          onChange={e => onChange({ ...action, params: { agent_id: parseInt(e.target.value) } })}
-        />
-      )}
-      {action.action_type === 'send_notification' && (
-        <input
-          className="w-full bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-text"
-          placeholder="Notification message"
-          value={action.params.message || ''}
-          onChange={e => onChange({ ...action, params: { message: e.target.value } })}
-        />
-      )}
-      {action.action_type === 'escalate' && (
-        <input
-          className="w-full bg-surface border border-border rounded-lg px-2 py-1.5 text-xs text-text"
-          placeholder="Escalation reason"
-          value={action.params.reason || ''}
-          onChange={e => onChange({ ...action, params: { reason: e.target.value } })}
-        />
-      )}
+        <div>{renderParams()}</div>
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="mt-2 p-1 text-subtle hover:text-red-400 transition-colors shrink-0"
+        aria-label="Remove action"
+      >
+        <X className="w-4 h-4" />
+      </button>
     </div>
   )
 }
 
-function RuleBuilder({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const { data: schema } = useQuery({
-    queryKey: ['crm-rule-schema'],
-    queryFn: () => crmApi.automationRules.schema().then(r => r.data),
-  })
+// ---------------------------------------------------------------------------
+// SortHeader helper
+// ---------------------------------------------------------------------------
 
-  const [step, setStep] = useState(1)
-  const [form, setForm] = useState({
-    name: '',
-    description: '',
-    trigger_event: 'TICKET_CREATED',
-    condition_logic: 'AND' as 'AND' | 'OR',
-    conditions: [] as RuleCondition[],
-    actions: [] as RuleAction[],
-    priority: 100,
-  })
-  const [previewResult, setPreviewResult] = useState<any>(null)
-  const [error, setError] = useState('')
+function SortHeader({
+  col,
+  label,
+  sortCol,
+  sortDir,
+  onSort,
+  className,
+}: {
+  col: SortColumn
+  label: string
+  sortCol: SortColumn
+  sortDir: SortDir
+  onSort: (c: SortColumn) => void
+  className?: string
+}) {
+  const active = sortCol === col
+  return (
+    <th
+      className={cn('px-3 py-3 cursor-pointer select-none', className)}
+      onClick={() => onSort(col)}
+    >
+      <span className="flex items-center gap-1 text-xs font-medium text-subtle">
+        {label}
+        {active
+          ? sortDir === 'asc'
+            ? <ChevronUp className="w-3.5 h-3.5 text-brand-400" />
+            : <ChevronDown className="w-3.5 h-3.5 text-brand-400" />
+          : <ChevronUp className="w-3.5 h-3.5 opacity-20" />}
+      </span>
+    </th>
+  )
+}
 
+// ---------------------------------------------------------------------------
+// Rule Editor Drawer
+// ---------------------------------------------------------------------------
+
+interface RuleEditorProps {
+  editingRule: AutomationRule | null
+  prefillForm: RuleFormState | null   // for clone
+  groups: Group[]
+  agents: AgentSummary[]
+  onClose: () => void
+  onSaved: () => void
+}
+
+function RuleEditor({ editingRule, prefillForm, groups, agents, onClose, onSaved }: RuleEditorProps) {
+  const qc = useQueryClient()
+
+  const initialForm: RuleFormState = prefillForm
+    ? prefillForm
+    : editingRule
+      ? ruleToForm(editingRule)
+      : blankForm()
+
+  const [form, setForm] = useState<RuleFormState>(initialForm)
+  const [previewState, setPreviewState] = useState<'idle' | 'loading' | 'done'>('idle')
+  const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null)
+  const [errors, setErrors] = useState<Record<string, string>>({})
+
+  const isEdit = editingRule !== null && prefillForm === null
+
+  // ── Mutations ──
   const createMutation = useMutation({
-    mutationFn: () => crmApi.automationRules.create(form).then(r => r.data),
-    onSuccess: () => { onSaved(); onClose() },
-    onError: (e: any) => setError(e.response?.data?.detail || 'Failed to create rule'),
+    mutationFn: (body: Parameters<typeof crmApi.automationRules.create>[0]) =>
+      crmApi.automationRules.create(body).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['crm-automation-rules'] })
+      toast.success('Rule created', `"${form.name}" is now active.`)
+      onSaved()
+    },
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error('Create failed', detail ?? 'Failed to create rule.')
+    },
   })
 
-  const previewMutation = useMutation({
-    mutationFn: () => crmApi.automationRules.preview({
-      conditions: form.conditions,
-      condition_logic: form.condition_logic,
-      trigger_event: form.trigger_event,
-    }).then(r => r.data),
-    onSuccess: data => setPreviewResult(data),
+  const updateMutation = useMutation({
+    mutationFn: (body: Parameters<typeof crmApi.automationRules.update>[1]) =>
+      crmApi.automationRules.update(editingRule!.id, body).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['crm-automation-rules'] })
+      toast.success('Rule updated', `"${form.name}" has been saved.`)
+      onSaved()
+    },
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error('Update failed', detail ?? 'Failed to update rule.')
+    },
   })
+
+  const isSaving = createMutation.isPending || updateMutation.isPending
+
+  // ── Form helpers ──
+  const setField = useCallback(<K extends keyof RuleFormState>(key: K, val: RuleFormState[K]) => {
+    setForm(prev => ({ ...prev, [key]: val }))
+    setErrors(prev => { const next = { ...prev }; delete next[key]; return next })
+  }, [])
 
   const addCondition = () =>
-    setForm(f => ({ ...f, conditions: [...f.conditions, { field: '', operator: 'eq', value: '' }] }))
+    setField('conditions', [...form.conditions, { field: 'status', operator: 'is', value: '' }])
+
+  const updateCondition = (i: number, updated: RuleCondition) => {
+    const next = [...form.conditions]; next[i] = updated; setField('conditions', next)
+  }
+  const removeCondition = (i: number) =>
+    setField('conditions', form.conditions.filter((_, idx) => idx !== i))
 
   const addAction = () =>
-    setForm(f => ({ ...f, actions: [...f.actions, { action_type: '', params: {} }] }))
+    setField('actions', [...form.actions, { action_type: 'change_status', params: {} }])
 
-  const steps = ['Basics', 'Conditions', 'Actions', 'Review']
+  const updateAction = (i: number, updated: RuleAction) => {
+    const next = [...form.actions]; next[i] = updated; setField('actions', next)
+  }
+  const removeAction = (i: number) =>
+    setField('actions', form.actions.filter((_, idx) => idx !== i))
+
+  // ── Validation ──
+  const validate = (): boolean => {
+    const errs: Record<string, string> = {}
+    if (!form.name.trim()) errs.name = 'Name is required.'
+    if (form.priority < 1 || form.priority > 999) errs.priority = 'Priority must be between 1 and 999.'
+    if (form.actions.length === 0) errs.actions = 'At least one action is required.'
+    setErrors(errs)
+    return Object.keys(errs).length === 0
+  }
+
+  // ── Preview ──
+  const handlePreview = async () => {
+    setPreviewState('loading')
+    setPreviewResult(null)
+    try {
+      const res = await crmApi.automationRules.preview({
+        conditions: form.conditions,
+        condition_logic: form.condition_logic,
+        trigger_event: form.trigger_event,
+      })
+      const raw = res.data as { count: number; tickets: PreviewTicket[] }
+      setPreviewResult(raw)
+      setPreviewState('done')
+    } catch {
+      toast.error('Preview failed', 'Could not run preview against open tickets.')
+      setPreviewState('idle')
+    }
+  }
+
+  // ── Save ──
+  const handleSave = () => {
+    if (!validate()) return
+    const body = {
+      name: form.name.trim(),
+      description: form.description.trim() || undefined,
+      trigger_event: form.trigger_event,
+      condition_logic: form.condition_logic,
+      conditions: form.conditions,
+      actions: form.actions,
+      priority: form.priority,
+      is_active: form.is_active,
+    }
+    if (isEdit) {
+      updateMutation.mutate(body)
+    } else {
+      createMutation.mutate(body)
+    }
+  }
+
+  const drawerTitle = isEdit
+    ? `Edit: ${editingRule.name}`
+    : prefillForm
+      ? `Clone: ${prefillForm.name}`
+      : 'Create Rule'
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-surface border border-border rounded-xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-border">
-          <h2 className="text-lg font-semibold text-text flex items-center gap-2">
-            <Zap className="w-5 h-5 text-brand" /> New Automation Rule
-          </h2>
-          <button onClick={onClose} className="text-text-muted hover:text-text"><X className="w-5 h-5" /></button>
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 bg-black/40 z-40"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+
+      {/* Drawer panel */}
+      <div className="fixed right-0 top-0 h-screen w-[700px] bg-surface-card border-l border-surface-border shadow-2xl z-50 flex flex-col">
+
+        {/* ── Header ── */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-surface-border shrink-0">
+          <h2 className="text-base font-semibold text-foreground">{drawerTitle}</h2>
+          <button
+            onClick={onClose}
+            className="p-1.5 text-subtle hover:text-foreground transition-colors rounded-md hover:bg-surface-border"
+            aria-label="Close drawer"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        {/* Step indicator */}
-        <div className="flex px-5 pt-4 gap-1">
-          {steps.map((s, i) => (
-            <div key={s} className="flex items-center gap-1 flex-1">
-              <button
-                onClick={() => setStep(i + 1)}
-                className={`w-6 h-6 rounded-full text-xs font-medium transition-colors ${
-                  step === i + 1
-                    ? 'bg-brand text-white'
-                    : step > i + 1
-                    ? 'bg-green-500 text-white'
-                    : 'bg-surface-2 text-text-muted'
-                }`}
-              >
-                {step > i + 1 ? <CheckCircle2 className="w-3 h-3 mx-auto" /> : i + 1}
-              </button>
-              <span className={`text-xs ${step === i + 1 ? 'text-text' : 'text-text-muted'}`}>{s}</span>
-              {i < steps.length - 1 && <div className="flex-1 h-px bg-border mx-1" />}
-            </div>
-          ))}
-        </div>
+        {/* ── Scrollable body ── */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-7">
 
-        {/* Step content */}
-        <div className="flex-1 overflow-y-auto p-5">
-          {step === 1 && (
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs text-text-muted mb-1 block">Rule Name *</label>
-                <input
-                  className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text"
+          {/* ═══ Section 1: Rule Info ═══ */}
+          <section className="space-y-4">
+            <SectionHeading>Rule Info</SectionHeading>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2">
+                <Input
+                  label="Name *"
+                  placeholder="e.g. Auto-escalate VIP tickets"
                   value={form.name}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="e.g. Auto-route fraud cases to Fraud Review"
+                  onChange={e => setField('name', e.target.value)}
+                  error={errors.name}
+                />
+              </div>
+              <div className="col-span-2">
+                <Textarea
+                  label="Description (optional)"
+                  placeholder="Describe what this rule does and when it should fire…"
+                  value={form.description}
+                  onChange={e => setField('description', e.target.value)}
+                  className="min-h-[64px]"
                 />
               </div>
               <div>
-                <label className="text-xs text-text-muted mb-1 block">Description</label>
-                <textarea
-                  className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text resize-none"
-                  rows={2}
-                  value={form.description}
-                  onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-                  placeholder="Optional description"
+                <Input
+                  label="Priority (1 = highest, runs first)"
+                  type="number"
+                  min={1}
+                  max={999}
+                  value={form.priority}
+                  onChange={e => setField('priority', Number(e.target.value))}
+                  error={errors.priority}
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-text-muted mb-1 block">Trigger Event *</label>
-                  <select
-                    className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text"
-                    value={form.trigger_event}
-                    onChange={e => setForm(f => ({ ...f, trigger_event: e.target.value }))}
+              <div className="flex items-end pb-1">
+                <Switch
+                  checked={form.is_active}
+                  onCheckedChange={v => setField('is_active', v)}
+                  label="Active"
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* ═══ Section 2: Trigger ═══ */}
+          <section className="space-y-3">
+            <SectionHeading accent="(Trigger)">When This Happens</SectionHeading>
+            <div className="grid grid-cols-2 gap-2">
+              {(Object.entries(TRIGGER_META) as [TriggerEvent, TriggerMeta][]).map(([key, meta]) => {
+                const active = form.trigger_event === key
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setField('trigger_event', key)}
+                    className={cn(
+                      'flex items-start gap-3 p-3 rounded-lg border text-left transition-colors',
+                      active
+                        ? 'border-brand-500 bg-brand-500/10'
+                        : 'border-surface-border hover:border-surface-muted hover:bg-surface/50'
+                    )}
                   >
-                    {(schema?.triggers || []).map((t: any) => (
-                      <option key={t.key} value={t.key}>{t.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs text-text-muted mb-1 block">Priority (lower = first)</label>
+                    <span className={cn('mt-0.5 shrink-0', active ? 'text-brand-400' : 'text-subtle')}>
+                      {meta.icon}
+                    </span>
+                    <div>
+                      <p className={cn('text-sm font-medium', active ? 'text-foreground' : 'text-muted')}>
+                        {meta.label}
+                      </p>
+                      <p className="text-xs text-subtle mt-0.5">{meta.description}</p>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+
+            {form.trigger_event === 'TIME_BASED' && (
+              <div className="mt-3 p-3 bg-surface/50 rounded-lg border border-surface-border space-y-2">
+                <p className="text-xs font-medium text-muted">Time-based configuration</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm text-muted">Fire when</span>
                   <input
                     type="number"
-                    className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text"
-                    value={form.priority}
-                    onChange={e => setForm(f => ({ ...f, priority: parseInt(e.target.value) || 100 }))}
                     min={1}
-                    max={999}
+                    className={cn(
+                      'w-20 bg-surface border border-surface-border rounded-md px-2 py-1.5 text-sm text-foreground',
+                      'focus:outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500'
+                    )}
+                    value={form.time_based_amount}
+                    onChange={e => setField('time_based_amount', Number(e.target.value))}
+                  />
+                  <Select
+                    options={[
+                      { value: 'hours',   label: 'hours' },
+                      { value: 'minutes', label: 'minutes' },
+                    ]}
+                    value={form.time_based_unit}
+                    onChange={e => setField('time_based_unit', e.target.value as 'hours' | 'minutes')}
+                  />
+                  <span className="text-sm text-muted">after</span>
+                  <Select
+                    options={[
+                      { value: 'created',              label: 'ticket created' },
+                      { value: 'updated',              label: 'last updated' },
+                      { value: 'first_response_due',   label: 'first response due' },
+                    ]}
+                    value={form.time_based_after}
+                    onChange={e =>
+                      setField('time_based_after', e.target.value as RuleFormState['time_based_after'])
+                    }
                   />
                 </div>
               </div>
-            </div>
-          )}
+            )}
+          </section>
 
-          {step === 2 && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-sm text-text font-medium">Conditions</p>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-text-muted">Logic:</span>
+          {/* ═══ Section 3: Conditions ═══ */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <SectionHeading>If Conditions Are Met</SectionHeading>
+              {/* AND / OR toggle pills */}
+              <div className="flex items-center gap-0.5 bg-surface rounded-full p-0.5 border border-surface-border">
+                {(['AND', 'OR'] as const).map(logic => (
                   <button
-                    onClick={() => setForm(f => ({ ...f, condition_logic: f.condition_logic === 'AND' ? 'OR' : 'AND' }))}
-                    className={`px-3 py-1 rounded text-xs font-mono font-medium border ${
-                      form.condition_logic === 'AND'
-                        ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
-                        : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                    }`}
+                    key={logic}
+                    type="button"
+                    onClick={() => setField('condition_logic', logic)}
+                    className={cn(
+                      'px-3 py-0.5 text-xs font-medium rounded-full transition-colors',
+                      form.condition_logic === logic
+                        ? 'bg-brand-600 text-white'
+                        : 'text-muted hover:text-foreground'
+                    )}
                   >
-                    {form.condition_logic}
+                    {logic === 'AND' ? 'AND — All must match' : 'OR — Any matches'}
                   </button>
-                </div>
+                ))}
               </div>
-              <p className="text-xs text-text-muted">
-                {form.condition_logic === 'AND'
-                  ? 'All conditions must match'
-                  : 'Any condition can match'}
-              </p>
-              <div className="space-y-2">
-                {form.conditions.map((c, i) => (
+            </div>
+
+            <div className="space-y-2">
+              {form.conditions.length === 0 ? (
+                <p className="text-sm text-subtle italic py-2">
+                  No conditions — rule will match ALL tickets.
+                </p>
+              ) : (
+                form.conditions.map((cond, i) => (
                   <ConditionRow
                     key={i}
-                    condition={c}
-                    schema={schema}
-                    onChange={nc => setForm(f => ({
-                      ...f,
-                      conditions: f.conditions.map((x, j) => j === i ? nc : x),
-                    }))}
-                    onRemove={() => setForm(f => ({
-                      ...f,
-                      conditions: f.conditions.filter((_, j) => j !== i),
-                    }))}
+                    condition={cond}
+                    index={i}
+                    onChange={updated => updateCondition(i, updated)}
+                    onRemove={() => removeCondition(i)}
                   />
-                ))}
-              </div>
-              <button
-                onClick={addCondition}
-                className="w-full py-2 border border-dashed border-border rounded-lg text-xs text-text-muted hover:text-text hover:border-text-muted transition-colors"
-              >
-                + Add Condition
-              </button>
-              {form.conditions.length > 0 && (
-                <button
-                  onClick={() => previewMutation.mutate()}
-                  disabled={previewMutation.isPending}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-surface-2 border border-border rounded-lg text-xs text-text-muted hover:text-text"
-                >
-                  <Eye className="w-3.5 h-3.5" />
-                  {previewMutation.isPending ? 'Checking...' : 'Preview matching tickets'}
-                </button>
-              )}
-              {previewResult && (
-                <div className="bg-surface-2 rounded-lg p-3 border border-border">
-                  <p className="text-xs font-medium text-text mb-2">
-                    {previewResult.count} open ticket{previewResult.count !== 1 ? 's' : ''} match
-                  </p>
-                  <div className="space-y-1 max-h-32 overflow-y-auto">
-                    {previewResult.matches.slice(0, 5).map((m: any) => (
-                      <div key={m.queue_id} className="flex items-center gap-2 text-xs text-text-muted">
-                        <span className="font-mono">#{m.ticket_id}</span>
-                        <span className="truncate">{m.subject || m.cx_email}</span>
-                        {m.ai_fraud_segment && (
-                          <span className={`px-1.5 py-0.5 rounded text-xs ${
-                            m.ai_fraud_segment === 'VERY_HIGH' ? 'bg-red-500/10 text-red-400' :
-                            m.ai_fraud_segment === 'HIGH' ? 'bg-amber-500/10 text-amber-400' :
-                            'bg-gray-500/10 text-gray-400'
-                          }`}>{m.ai_fraud_segment}</span>
-                        )}
-                      </div>
-                    ))}
-                    {previewResult.count > 5 && (
-                      <p className="text-xs text-text-muted">+{previewResult.count - 5} more</p>
-                    )}
-                  </div>
-                </div>
+                ))
               )}
             </div>
-          )}
+            <Button variant="outline" size="sm" onClick={addCondition} type="button">
+              <Plus className="w-3.5 h-3.5" />
+              Add Condition
+            </Button>
+          </section>
 
-          {step === 3 && (
-            <div className="space-y-3">
-              <p className="text-sm text-text font-medium">Actions</p>
-              <p className="text-xs text-text-muted">Actions run in order when conditions match.</p>
-              <div className="space-y-2">
-                {form.actions.map((a, i) => (
+          {/* ═══ Section 4: Actions ═══ */}
+          <section className="space-y-3">
+            <SectionHeading>Then Perform These Actions</SectionHeading>
+            {errors.actions && <p className="text-xs text-red-400">{errors.actions}</p>}
+            <div className="space-y-2">
+              {form.actions.length === 0 ? (
+                <p className="text-sm text-subtle italic py-2">No actions added yet.</p>
+              ) : (
+                form.actions.map((action, i) => (
                   <ActionRow
                     key={i}
-                    action={a}
-                    schema={schema}
-                    onChange={na => setForm(f => ({
-                      ...f,
-                      actions: f.actions.map((x, j) => j === i ? na : x),
-                    }))}
-                    onRemove={() => setForm(f => ({
-                      ...f,
-                      actions: f.actions.filter((_, j) => j !== i),
-                    }))}
+                    action={action}
+                    index={i}
+                    groups={groups}
+                    agents={agents}
+                    onChange={updated => updateAction(i, updated)}
+                    onRemove={() => removeAction(i)}
                   />
-                ))}
-              </div>
-              <button
-                onClick={addAction}
-                className="w-full py-2 border border-dashed border-border rounded-lg text-xs text-text-muted hover:text-text hover:border-text-muted transition-colors"
-              >
-                + Add Action
-              </button>
+                ))
+              )}
             </div>
-          )}
+            <Button variant="outline" size="sm" onClick={addAction} type="button">
+              <Plus className="w-3.5 h-3.5" />
+              Add Action
+            </Button>
+          </section>
 
-          {step === 4 && (
-            <div className="space-y-4">
-              <p className="text-sm text-text font-medium">Review Rule</p>
-              <div className="bg-surface-2 rounded-xl p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs px-2 py-0.5 rounded-full border ${TRIGGER_COLORS[form.trigger_event]}`}>
-                    {TRIGGER_LABELS[form.trigger_event]}
-                  </span>
-                  <ArrowRight className="w-4 h-4 text-text-muted" />
-                  <span className="text-sm font-medium text-text">{form.name || 'Unnamed Rule'}</span>
+          {/* ═══ Preview Results ═══ */}
+          {previewState !== 'idle' && (
+            <section className="space-y-3">
+              <SectionHeading>Preview Results</SectionHeading>
+              {previewState === 'loading' ? (
+                <div className="flex items-center gap-2 text-sm text-muted py-2">
+                  <Spinner size="sm" />
+                  Testing against open tickets…
                 </div>
-                {form.description && <p className="text-xs text-text-muted">{form.description}</p>}
-
-                {form.conditions.length > 0 && (
-                  <div>
-                    <p className="text-xs text-text-muted uppercase tracking-wider mb-2">
-                      Conditions ({form.condition_logic})
-                    </p>
-                    {form.conditions.map((c, i) => (
-                      <div key={i} className="text-xs text-text font-mono bg-surface rounded p-2 mb-1">
-                        {c.field} {c.operator} "{c.value}"
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {form.actions.length > 0 && (
-                  <div>
-                    <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Actions</p>
-                    {form.actions.map((a, i) => (
-                      <div key={i} className="text-xs text-text bg-surface rounded p-2 mb-1 flex items-center gap-2">
-                        <span className="w-4 h-4 rounded-full bg-brand/20 text-brand text-center leading-4">{i + 1}</span>
-                        <span className="font-medium">{ACTION_LABELS[a.action_type] || a.action_type}</span>
-                        {Object.keys(a.params || {}).length > 0 && (
-                          <span className="text-text-muted">→ {JSON.stringify(a.params)}</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              {error && <p className="text-red-400 text-xs">{error}</p>}
-            </div>
+              ) : previewResult ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground">
+                    {previewResult.count} ticket{previewResult.count !== 1 ? 's' : ''} match these conditions
+                  </p>
+                  {previewResult.tickets.length > 0 ? (
+                    <div className="overflow-x-auto border border-surface-border rounded-lg">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-surface-border bg-surface/50">
+                            {['Ticket ID', 'Subject', 'Queue Type', 'Status', 'Priority', 'Created'].map(h => (
+                              <th key={h} className="text-left px-3 py-2 text-subtle font-medium whitespace-nowrap">
+                                {h}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {previewResult.tickets.map(t => (
+                            <tr
+                              key={t.id}
+                              className="border-b border-surface-border hover:bg-surface/30 last:border-0"
+                            >
+                              <td className="px-3 py-2 font-mono text-brand-400">#{t.id}</td>
+                              <td className="px-3 py-2 text-foreground max-w-[160px] truncate">
+                                {t.subject ?? '—'}
+                              </td>
+                              <td className="px-3 py-2 text-subtle">{t.queue_type.replace(/_/g, ' ')}</td>
+                              <td className="px-3 py-2 text-subtle">{t.status.replace(/_/g, ' ')}</td>
+                              <td className="px-3 py-2 text-subtle">
+                                {PRIORITY_LABEL[String(t.priority)] ?? String(t.priority)}
+                              </td>
+                              <td className="px-3 py-2 text-subtle whitespace-nowrap">
+                                {formatDate(t.created_at)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-subtle italic">No matching tickets found in the open queue.</p>
+                  )}
+                </div>
+              ) : null}
+            </section>
           )}
         </div>
 
-        {/* Footer nav */}
-        <div className="flex items-center justify-between p-5 border-t border-border">
-          <button
-            onClick={() => step > 1 ? setStep(s => s - 1) : onClose()}
-            className="px-4 py-2 text-sm text-text-muted hover:text-text"
-          >
-            {step === 1 ? 'Cancel' : '← Back'}
-          </button>
-          {step < 4 ? (
-            <button
-              onClick={() => setStep(s => s + 1)}
-              disabled={step === 1 && !form.name.trim()}
-              className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium disabled:opacity-50"
+        {/* ── Sticky Footer ── */}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-surface-border bg-surface-card shrink-0">
+          <Button variant="ghost" onClick={onClose} type="button">
+            Cancel
+          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              onClick={handlePreview}
+              loading={previewState === 'loading'}
+              type="button"
             >
-              Next →
-            </button>
-          ) : (
-            <button
-              onClick={() => createMutation.mutate()}
-              disabled={!form.name.trim() || form.actions.length === 0 || createMutation.isPending}
-              className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium disabled:opacity-50"
+              <PlayCircle className="w-4 h-4" />
+              Preview Results
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleSave}
+              loading={isSaving}
+              type="button"
             >
-              {createMutation.isPending ? 'Saving...' : 'Create Rule'}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function RuleCard({ rule, onToggle, onDelete }: { rule: AutomationRule; onToggle: () => void; onDelete: () => void }) {
-  const [expanded, setExpanded] = useState(false)
-
-  return (
-    <div className={`bg-surface border rounded-xl transition-colors ${rule.is_active ? 'border-border' : 'border-border/40 opacity-60'}`}>
-      <div className="flex items-center gap-3 p-4">
-        {/* Toggle */}
-        <button onClick={onToggle} className="shrink-0 text-text-muted hover:text-text">
-          {rule.is_active
-            ? <ToggleRight className="w-5 h-5 text-green-500" />
-            : <ToggleLeft className="w-5 h-5" />}
-        </button>
-
-        {/* Info */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-0.5">
-            <span className={`text-xs px-2 py-0.5 rounded-full border ${TRIGGER_COLORS[rule.trigger_event]}`}>
-              {TRIGGER_LABELS[rule.trigger_event]}
-            </span>
-            {rule.is_seeded && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-brand/10 text-brand border border-brand/20 flex items-center gap-1">
-                <Sparkles className="w-3 h-3" /> Cardinal
-              </span>
-            )}
-            <span className="text-xs text-text-muted">Priority {rule.priority}</span>
+              Save Rule
+            </Button>
           </div>
-          <p className="text-sm font-medium text-text truncate">{rule.name}</p>
-          {rule.description && (
-            <p className="text-xs text-text-muted mt-0.5 truncate">{rule.description}</p>
-          )}
-        </div>
-
-        {/* Stats */}
-        <div className="text-right shrink-0 hidden sm:block">
-          <p className="text-xs text-text-muted">Ran {rule.run_count} times</p>
-          {rule.last_run_at && (
-            <p className="text-xs text-text-muted">
-              Last: {new Date(rule.last_run_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
-            </p>
-          )}
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center gap-1 shrink-0">
-          <button
-            onClick={() => setExpanded(e => !e)}
-            className="p-1.5 text-text-muted hover:text-text rounded"
-          >
-            {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </button>
-          <button
-            onClick={onDelete}
-            className="p-1.5 text-red-400 hover:text-red-300 rounded"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
         </div>
       </div>
-
-      {expanded && (
-        <div className="border-t border-border px-4 pb-4 pt-3 space-y-3">
-          {/* Conditions */}
-          {(rule.conditions || []).length > 0 && (
-            <div>
-              <p className="text-xs text-text-muted uppercase tracking-wider mb-2">
-                Conditions ({rule.condition_logic || 'AND'})
-              </p>
-              <div className="space-y-1">
-                {rule.conditions.map((c, i) => (
-                  <div key={i} className="text-xs font-mono text-text bg-surface-2 rounded px-3 py-1.5">
-                    <span className="text-text-muted">{c.field}</span>{' '}
-                    <span className="text-brand">{c.operator}</span>{' '}
-                    <span className="text-green-400">"{c.value}"</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Actions */}
-          {(rule.actions || []).length > 0 && (
-            <div>
-              <p className="text-xs text-text-muted uppercase tracking-wider mb-2">Actions</p>
-              <div className="space-y-1">
-                {rule.actions.map((a, i) => (
-                  <div key={i} className="text-xs text-text bg-surface-2 rounded px-3 py-1.5 flex items-center gap-2">
-                    <span className="w-4 h-4 rounded-full bg-brand/20 text-brand text-center text-xs leading-4 shrink-0">{i + 1}</span>
-                    <span className="font-medium">{ACTION_LABELS[a.action_type] || a.action_type}</span>
-                    {Object.keys(a.params || {}).length > 0 && (
-                      <span className="text-text-muted truncate">
-                        → {Object.entries(a.params).map(([k, v]) => `${k}: ${v}`).join(', ')}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+    </>
   )
 }
+
+// ---------------------------------------------------------------------------
+// SectionHeading helper
+// ---------------------------------------------------------------------------
+
+function SectionHeading({
+  children,
+  accent,
+}: {
+  children: React.ReactNode
+  accent?: string
+}) {
+  return (
+    <h3 className="text-xs font-semibold text-subtle uppercase tracking-wider">
+      {children}
+      {accent && (
+        <span className="ml-1.5 normal-case text-brand-400 font-normal tracking-normal">
+          {accent}
+        </span>
+      )}
+    </h3>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// CRMAutomationPage (main export)
+// ---------------------------------------------------------------------------
 
 export default function CRMAutomationPage() {
-  const { user } = useAuthStore()
   const qc = useQueryClient()
-  const [showBuilder, setShowBuilder] = useState(false)
 
-  const { data: rules = [], isLoading } = useQuery({
+  const [filterTab, setFilterTab]   = useState<FilterTab>('all')
+  const [search, setSearch]         = useState('')
+  const [sortCol, setSortCol]       = useState<SortColumn>('priority')
+  const [sortDir, setSortDir]       = useState<SortDir>('asc')
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [editingRule, setEditingRule] = useState<AutomationRule | null>(null)
+  const [prefillForm, setPrefillForm] = useState<RuleFormState | null>(null)
+
+  // ── Queries ──────────────────────────────────────────────────────────────
+
+  const { data: rulesRaw = [], isLoading: rulesLoading } = useQuery({
     queryKey: ['crm-automation-rules'],
-    queryFn: () => crmApi.automationRules.list().then(r => r.data as AutomationRule[]),
+    queryFn: () => crmApi.automationRules.list().then(r => r.data),
   })
 
+  const { data: groupsRaw = [] } = useQuery({
+    queryKey: ['crm-groups'],
+    queryFn: () => crmApi.groups.list().then(r => r.data),
+  })
+
+  const { data: agentsRaw = [] } = useQuery({
+    queryKey: ['crm-agents'],
+    queryFn: () => crmApi.getAgents().then(r => r.data),
+  })
+
+  // ── Mutations ─────────────────────────────────────────────────────────────
+
   const toggleMutation = useMutation({
-    mutationFn: (id: number) => crmApi.automationRules.toggle(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm-automation-rules'] }),
+    mutationFn: (id: number) => crmApi.automationRules.toggle(id).then(r => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['crm-automation-rules'] })
+      toast.success('Rule updated')
+    },
+    onError: () => toast.error('Toggle failed', 'Could not change the rule status.'),
   })
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => crmApi.automationRules.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['crm-automation-rules'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['crm-automation-rules'] })
+      toast.success('Rule deleted')
+    },
+    onError: () => toast.error('Delete failed', 'Could not delete the rule.'),
   })
 
-  const activeCount  = rules.filter((r: AutomationRule) => r.is_active).length
-  const seededCount  = rules.filter((r: AutomationRule) => r.is_seeded).length
-  const totalRuns    = rules.reduce((sum: number, r: AutomationRule) => sum + (r.run_count || 0), 0)
+  const bulkToggleMutation = useMutation({
+    mutationFn: async ({ ids, activate }: { ids: number[]; activate: boolean }) => {
+      for (const id of ids) {
+        const rule = rulesRaw.find(r => r.id === id)
+        if (rule && rule.is_active !== activate) {
+          await crmApi.automationRules.toggle(id)
+        }
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['crm-automation-rules'] })
+      toast.success('Bulk update applied')
+      setSelectedIds(new Set())
+    },
+    onError: () => toast.error('Bulk update failed'),
+  })
 
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids: number[]) => {
+      for (const id of ids) {
+        await crmApi.automationRules.delete(id)
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['crm-automation-rules'] })
+      toast.success('Selected rules deleted')
+      setSelectedIds(new Set())
+    },
+    onError: () => toast.error('Bulk delete failed'),
+  })
+
+  // ── Sort ──────────────────────────────────────────────────────────────────
+
+  const handleSort = (col: SortColumn) => {
+    if (sortCol === col) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortCol(col)
+      setSortDir('asc')
+    }
+  }
+
+  // ── Filter + Sort ─────────────────────────────────────────────────────────
+
+  const filtered = rulesRaw
+    .filter(r => {
+      if (filterTab === 'event')    return r.trigger_event !== 'TIME_BASED' && r.is_active
+      if (filterTab === 'time')     return r.trigger_event === 'TIME_BASED'
+      if (filterTab === 'disabled') return !r.is_active
+      return true
+    })
+    .filter(r =>
+      !search.trim() || r.name.toLowerCase().includes(search.trim().toLowerCase())
+    )
+    .sort((a, b) => {
+      let cmp = 0
+      if (sortCol === 'priority') {
+        cmp = a.priority - b.priority
+      } else if (sortCol === 'name') {
+        cmp = a.name.localeCompare(b.name)
+      } else if (sortCol === 'run_count') {
+        cmp = a.run_count - b.run_count
+      } else if (sortCol === 'last_run_at') {
+        const ta = a.last_run_at ? new Date(a.last_run_at).getTime() : 0
+        const tb = b.last_run_at ? new Date(b.last_run_at).getTime() : 0
+        cmp = ta - tb
+      }
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+
+  // ── Stats ─────────────────────────────────────────────────────────────────
+
+  const activeCount = rulesRaw.filter(r => r.is_active).length
+  const seededCount = rulesRaw.filter(r => r.is_seeded).length
+  const totalRuns   = rulesRaw.reduce((acc, r) => acc + r.run_count, 0)
+
+  // ── Selection ─────────────────────────────────────────────────────────────
+
+  const allPageSelected =
+    filtered.length > 0 && filtered.every(r => selectedIds.has(r.id))
+  const someSelected = selectedIds.size > 0
+
+  const toggleSelectAll = () => {
+    if (allPageSelected) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filtered.map(r => r.id)))
+    }
+  }
+
+  const toggleSelectRow = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // ── Drawer controls ───────────────────────────────────────────────────────
+
+  const openCreate = () => {
+    setEditingRule(null)
+    setPrefillForm(null)
+    setDrawerOpen(true)
+  }
+
+  const openEdit = (rule: AutomationRule) => {
+    setEditingRule(rule)
+    setPrefillForm(null)
+    setDrawerOpen(true)
+  }
+
+  const handleClone = (rule: AutomationRule) => {
+    const cloned = ruleToForm(rule)
+    cloned.name     = `${rule.name} (Copy)`
+    cloned.is_active = false
+    setEditingRule(null)
+    setPrefillForm(cloned)
+    setDrawerOpen(true)
+  }
+
+  const closeDrawer = () => {
+    setDrawerOpen(false)
+    setEditingRule(null)
+    setPrefillForm(null)
+  }
+
+  // ── Bulk delete confirm ───────────────────────────────────────────────────
+
+  const handleBulkDelete = () => {
+    const count = selectedIds.size
+    if (
+      window.confirm(
+        `Delete ${count} selected rule${count !== 1 ? 's' : ''}? This cannot be undone.`
+      )
+    ) {
+      bulkDeleteMutation.mutate(Array.from(selectedIds))
+    }
+  }
+
+  const handleDeleteRow = (rule: AutomationRule) => {
+    if (
+      window.confirm(`Delete "${rule.name}"? This cannot be undone.`)
+    ) {
+      deleteMutation.mutate(rule.id)
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="flex flex-col h-full">
+
+      {/* ── Page Header ─────────────────────────────────────────────────────── */}
+      <div className="flex items-start justify-between px-6 pt-6 pb-4 shrink-0">
         <div>
-          <h1 className="text-xl font-semibold text-text flex items-center gap-2">
-            <Zap className="w-5 h-5 text-brand" /> Automation Rules
-          </h1>
-          <p className="text-sm text-text-muted mt-1">Cardinal-powered trigger-based automation for your CRM queue</p>
+          <h1 className="text-xl font-semibold text-foreground">Automation Rules</h1>
+          <p className="text-sm text-muted mt-1">
+            Automate ticket routing, escalation, and actions based on events and conditions
+          </p>
         </div>
-        <button
-          onClick={() => setShowBuilder(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-brand/90"
-        >
-          <Plus className="w-4 h-4" /> New Rule
-        </button>
+        <Button onClick={openCreate} size="md">
+          <Plus className="w-4 h-4" />
+          New Rule
+        </Button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        {[
-          { label: 'Active Rules', value: activeCount, color: 'text-green-400' },
-          { label: 'Cardinal Rules', value: seededCount, color: 'text-brand' },
-          { label: 'Total Executions', value: totalRuns.toLocaleString('en-IN'), color: 'text-text' },
-        ].map(s => (
-          <div key={s.label} className="bg-surface border border-border rounded-xl p-4">
-            <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-            <p className="text-xs text-text-muted mt-1">{s.label}</p>
-          </div>
-        ))}
-      </div>
+      <div className="flex-1 overflow-y-auto px-6 pb-8 space-y-5">
 
-      {/* Cardinal info banner */}
-      {seededCount > 0 && (
-        <div className="bg-brand/5 border border-brand/20 rounded-xl p-4 mb-5 flex items-start gap-3">
-          <Sparkles className="w-4 h-4 text-brand shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm text-text font-medium">
-              {seededCount} Cardinal signal rules are active
-            </p>
-            <p className="text-xs text-text-muted mt-0.5">
-              These rules fire automatically when Cardinal's 4-stage pipeline produces high-fraud, low-confidence, or SLA-at-risk signals — routing tickets before any agent touches them.
-            </p>
-          </div>
+        {/* ── Stats Row ─────────────────────────────────────────────────────── */}
+        <div className="flex gap-3 flex-wrap">
+          <StatCard
+            label="Active Rules"
+            value={activeCount}
+            sub={`of ${rulesRaw.length} total`}
+          />
+          <StatCard
+            label="Cardinal AI Rules"
+            value={seededCount}
+            sub="pre-seeded by Cardinal"
+          />
+          <StatCard
+            label="Total Runs"
+            value={totalRuns.toLocaleString()}
+            sub="lifetime executions"
+          />
         </div>
-      )}
 
-      {isLoading ? (
-        <div className="space-y-3">
-          {[1, 2, 3].map(i => <div key={i} className="h-20 bg-surface-2 rounded-xl animate-pulse" />)}
-        </div>
-      ) : rules.length === 0 ? (
-        <div className="text-center py-20 text-text-muted">
-          <Zap className="w-12 h-12 mx-auto mb-4 opacity-30" />
-          <p className="text-sm">No automation rules yet.</p>
-          <p className="text-xs mt-1">Create your first rule to start automating ticket routing.</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {rules.map((rule: AutomationRule) => (
-            <RuleCard
-              key={rule.id}
-              rule={rule}
-              onToggle={() => toggleMutation.mutate(rule.id)}
-              onDelete={() => deleteMutation.mutate(rule.id)}
+        {/* ── Filter Tabs + Search ───────────────────────────────────────────── */}
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-1 border-b border-surface-border">
+            {FILTER_TABS.map(tab => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setFilterTab(tab.key)}
+                className={cn(
+                  'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
+                  filterTab === tab.key
+                    ? 'border-brand-500 text-brand-400'
+                    : 'border-transparent text-muted hover:text-foreground'
+                )}
+              >
+                {tab.label}
+                {tab.key === 'all' && (
+                  <span className="ml-1.5 text-xs text-subtle">
+                    ({rulesRaw.length})
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-subtle pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search rules…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className={cn(
+                'w-full bg-surface border border-surface-border rounded-md pl-9 pr-3 py-2 text-sm text-foreground',
+                'placeholder:text-subtle focus:outline-none focus:ring-1 focus:ring-brand-500 focus:border-brand-500'
+              )}
             />
-          ))}
+          </div>
         </div>
-      )}
 
-      {showBuilder && (
-        <RuleBuilder
-          onClose={() => setShowBuilder(false)}
-          onSaved={() => qc.invalidateQueries({ queryKey: ['crm-automation-rules'] })}
+        {/* ── Bulk Actions Bar ───────────────────────────────────────────────── */}
+        {someSelected && (
+          <div className="flex items-center gap-3 px-4 py-2.5 bg-brand-500/10 border border-brand-500/30 rounded-lg">
+            <span className="text-sm font-medium text-brand-300">
+              {selectedIds.size} rule{selectedIds.size !== 1 ? 's' : ''} selected
+            </span>
+            <div className="flex items-center gap-2 ml-auto">
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={bulkToggleMutation.isPending}
+                onClick={() =>
+                  bulkToggleMutation.mutate({ ids: Array.from(selectedIds), activate: true })
+                }
+              >
+                <ToggleRight className="w-3.5 h-3.5" />
+                Enable All
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={bulkToggleMutation.isPending}
+                onClick={() =>
+                  bulkToggleMutation.mutate({ ids: Array.from(selectedIds), activate: false })
+                }
+              >
+                <ToggleLeft className="w-3.5 h-3.5" />
+                Disable All
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                loading={bulkDeleteMutation.isPending}
+                onClick={handleBulkDelete}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Selected
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Rules Table ────────────────────────────────────────────────────── */}
+        <Card className="overflow-hidden">
+          {rulesLoading ? (
+            <div className="flex items-center justify-center py-16 gap-3 text-muted">
+              <Spinner />
+              <span className="text-sm">Loading automation rules…</span>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+              <Zap className="w-10 h-10 text-subtle" />
+              <p className="text-sm font-medium text-muted">No rules found</p>
+              <p className="text-xs text-subtle max-w-xs">
+                {search
+                  ? 'Try adjusting your search term.'
+                  : 'Create your first automation rule to get started.'}
+              </p>
+              {!search && (
+                <Button size="sm" onClick={openCreate} className="mt-2">
+                  <Plus className="w-4 h-4" />
+                  New Rule
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-surface-border bg-surface/50">
+                    {/* Select-all */}
+                    <th className="w-10 px-3 py-3">
+                      <button
+                        type="button"
+                        onClick={toggleSelectAll}
+                        className="text-subtle hover:text-foreground"
+                        aria-label="Select all"
+                      >
+                        {allPageSelected
+                          ? <CheckSquare className="w-4 h-4 text-brand-400" />
+                          : <Square className="w-4 h-4" />}
+                      </button>
+                    </th>
+
+                    {/* Priority */}
+                    <SortHeader
+                      col="priority"
+                      label="#"
+                      sortCol={sortCol}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                      className="w-12 text-left"
+                    />
+
+                    {/* Name */}
+                    <SortHeader
+                      col="name"
+                      label="Name"
+                      sortCol={sortCol}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                      className="text-left"
+                    />
+
+                    <th className="text-left px-3 py-3 text-xs font-medium text-subtle whitespace-nowrap">
+                      Trigger
+                    </th>
+                    <th className="text-left px-3 py-3 text-xs font-medium text-subtle whitespace-nowrap">
+                      Conditions
+                    </th>
+                    <th className="text-left px-3 py-3 text-xs font-medium text-subtle whitespace-nowrap">
+                      Actions
+                    </th>
+                    <th className="text-left px-3 py-3 text-xs font-medium text-subtle whitespace-nowrap">
+                      Status
+                    </th>
+
+                    {/* Run count */}
+                    <SortHeader
+                      col="run_count"
+                      label="Runs"
+                      sortCol={sortCol}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                      className="text-left whitespace-nowrap"
+                    />
+
+                    {/* Last run */}
+                    <SortHeader
+                      col="last_run_at"
+                      label="Last Run"
+                      sortCol={sortCol}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                      className="text-left whitespace-nowrap"
+                    />
+
+                    <th className="w-28 px-3 py-3 text-xs font-medium text-subtle text-right">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {filtered.map((rule, idx) => (
+                    <tr
+                      key={rule.id}
+                      className={cn(
+                        'border-b border-surface-border transition-colors hover:bg-surface/40',
+                        selectedIds.has(rule.id) && 'bg-brand-500/5',
+                        idx === filtered.length - 1 && 'border-0'
+                      )}
+                    >
+                      {/* Checkbox */}
+                      <td className="px-3 py-3">
+                        <button
+                          type="button"
+                          onClick={() => toggleSelectRow(rule.id)}
+                          className="text-subtle hover:text-foreground"
+                        >
+                          {selectedIds.has(rule.id)
+                            ? <CheckSquare className="w-4 h-4 text-brand-400" />
+                            : <Square className="w-4 h-4" />}
+                        </button>
+                      </td>
+
+                      {/* Priority */}
+                      <td className="px-2 py-3">
+                        <span className="text-xs text-subtle tabular-nums font-medium">
+                          {rule.priority}
+                        </span>
+                      </td>
+
+                      {/* Name + description + Cardinal badge */}
+                      <td className="px-3 py-3 max-w-[220px]">
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-sm font-medium text-foreground truncate">
+                              {rule.name}
+                            </span>
+                            {rule.is_seeded && (
+                              <Badge
+                                variant="purple"
+                                className="flex items-center gap-0.5 shrink-0"
+                              >
+                                <Zap className="w-2.5 h-2.5" />
+                                Cardinal
+                              </Badge>
+                            )}
+                          </div>
+                          {rule.description && (
+                            <p className="text-xs text-subtle truncate max-w-[200px]">
+                              {rule.description}
+                            </p>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Trigger */}
+                      <td className="px-3 py-3">
+                        <TriggerBadge event={rule.trigger_event} />
+                      </td>
+
+                      {/* Conditions */}
+                      <td className="px-3 py-3">
+                        <span className="text-xs text-muted">
+                          {conditionsSummary(rule.conditions, rule.condition_logic)}
+                        </span>
+                      </td>
+
+                      {/* Actions */}
+                      <td className="px-3 py-3">
+                        <span className="text-xs text-muted">
+                          {actionsSummary(rule.actions)}
+                        </span>
+                      </td>
+
+                      {/* Status toggle */}
+                      <td className="px-3 py-3">
+                        <Switch
+                          checked={rule.is_active}
+                          onCheckedChange={() => toggleMutation.mutate(rule.id)}
+                          disabled={toggleMutation.isPending}
+                        />
+                      </td>
+
+                      {/* Run count */}
+                      <td className="px-3 py-3">
+                        <span className="text-xs tabular-nums text-foreground">
+                          {rule.run_count.toLocaleString()}
+                        </span>
+                      </td>
+
+                      {/* Last run */}
+                      <td className="px-3 py-3">
+                        <span className="text-xs text-muted whitespace-nowrap">
+                          {formatDate(rule.last_run_at)}
+                        </span>
+                      </td>
+
+                      {/* Row action buttons */}
+                      <td className="px-3 py-3">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            title="Edit rule"
+                            onClick={() => openEdit(rule)}
+                            className="p-1.5 rounded text-subtle hover:text-foreground hover:bg-surface-border transition-colors"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            title="Clone rule"
+                            onClick={() => handleClone(rule)}
+                            className="p-1.5 rounded text-subtle hover:text-foreground hover:bg-surface-border transition-colors"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            title="Delete rule"
+                            onClick={() => handleDeleteRow(rule)}
+                            disabled={deleteMutation.isPending}
+                            className="p-1.5 rounded text-subtle hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                          >
+                            {deleteMutation.isPending
+                              ? <Spinner size="sm" />
+                              : <Trash2 className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+
+        {!rulesLoading && filtered.length > 0 && (
+          <p className="text-xs text-subtle">
+            Showing {filtered.length} of {rulesRaw.length} rule{rulesRaw.length !== 1 ? 's' : ''}
+          </p>
+        )}
+      </div>
+
+      {/* ── Rule Editor Drawer ──────────────────────────────────────────────── */}
+      {drawerOpen && (
+        <RuleEditor
+          editingRule={editingRule}
+          prefillForm={prefillForm}
+          groups={groupsRaw}
+          agents={agentsRaw}
+          onClose={closeDrawer}
+          onSaved={closeDrawer}
         />
       )}
     </div>

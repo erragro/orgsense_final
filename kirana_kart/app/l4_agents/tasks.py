@@ -1128,6 +1128,23 @@ def beat_crm_automation_sla():
         return {"error": str(exc)}
 
 
+@celery_app.task(name="app.l4_agents.tasks.beat_crm_automation_timebased")
+def beat_crm_automation_timebased():
+    """
+    Every 15 minutes: evaluate TIME_BASED automation rules against all open tickets.
+    Useful for rules like "escalate if not responded within 4 hours".
+    """
+    try:
+        from app.admin.services.crm_automation_engine import run_time_based_rules
+        applied = run_time_based_rules()
+        if applied:
+            logger.info("[CRM Automation] TIME_BASED: %d rule applications", applied)
+        return {"applied": applied}
+    except Exception as exc:
+        logger.error("[CRM Automation] beat_crm_automation_timebased failed: %s", exc)
+        return {"error": str(exc)}
+
+
 # ============================================================
 # CELERY BEAT SCHEDULE
 # ============================================================
@@ -1192,5 +1209,10 @@ celery_app.conf.beat_schedule = {
     "crm-automation-sla-every-5m": {
         "task":     "app.l4_agents.tasks.beat_crm_automation_sla",
         "schedule": 300.0,  # 5 minutes — SLA_WARNING + SLA_BREACHED triggers
+    },
+
+    "crm-automation-timebased-every-15m": {
+        "task":     "app.l4_agents.tasks.beat_crm_automation_timebased",
+        "schedule": 900.0,  # 15 minutes — TIME_BASED rules
     },
 }

@@ -803,3 +803,114 @@ def preview_automation_rule(body: PreviewRuleBody, _u: UserContext = Depends(_ad
         trigger=body.trigger_event,
     )
     return {"count": len(matches), "matches": matches}
+
+
+# ---------------------------------------------------------------------------
+# Group Integrations
+# ---------------------------------------------------------------------------
+
+
+class CreateIntegrationBody(BaseModel):
+    type: str
+    name: str
+    config: dict = {}
+
+
+class UpdateIntegrationBody(BaseModel):
+    name: str | None = None
+    config: dict | None = None
+    is_active: bool | None = None
+
+
+@router.get("/groups/{group_id}/integrations")
+def list_group_integrations(group_id: int, _u: UserContext = Depends(_view)):
+    return svc.list_group_integrations(group_id)
+
+
+@router.post("/groups/{group_id}/integrations")
+def create_group_integration(
+    group_id: int,
+    body: CreateIntegrationBody,
+    current_user: UserContext = Depends(_admin),
+):
+    try:
+        return svc.create_group_integration(
+            group_id=group_id,
+            integration_type=body.type,
+            name=body.name,
+            config=body.config,
+            creator_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.patch("/groups/{group_id}/integrations/{integration_id}")
+def update_group_integration(
+    group_id: int,
+    integration_id: int,
+    body: UpdateIntegrationBody,
+    _u: UserContext = Depends(_admin),
+):
+    return svc.update_group_integration(
+        integration_id=integration_id,
+        config=body.config,
+        is_active=body.is_active,
+        name=body.name,
+    )
+
+
+@router.delete("/groups/{group_id}/integrations/{integration_id}")
+def delete_group_integration(
+    group_id: int,
+    integration_id: int,
+    _u: UserContext = Depends(_admin),
+):
+    svc.delete_group_integration(integration_id)
+    return {"ok": True}
+
+
+@router.post("/groups/{group_id}/integrations/generate-key")
+def generate_api_key(
+    group_id: int,
+    body: CreateIntegrationBody,
+    current_user: UserContext = Depends(_admin),
+):
+    # Create API_KEY integration and return the full key (only shown once)
+    try:
+        return svc.create_group_integration(
+            group_id=group_id,
+            integration_type="API_KEY",
+            name=body.name or "API Integration",
+            config=body.config,
+            creator_id=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/groups/{group_id}/integrations/{integration_id}/regenerate-key")
+def regenerate_api_key(
+    group_id: int,
+    integration_id: int,
+    _u: UserContext = Depends(_admin),
+):
+    try:
+        return svc.regenerate_api_key(integration_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Test Ticket Seeding (admin only)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/admin/seed-test-tickets")
+def seed_test_tickets(_u: UserContext = Depends(_admin)):
+    """Seed 10 test tickets covering all Kirana Kart KB scenarios."""
+    try:
+        result = svc.seed_test_tickets()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

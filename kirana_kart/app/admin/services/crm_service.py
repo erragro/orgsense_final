@@ -300,7 +300,7 @@ def ensure_crm_tables() -> None:
             trigger_event   VARCHAR(40) NOT NULL
                                 CHECK (trigger_event IN (
                                     'TICKET_CREATED','TICKET_UPDATED',
-                                    'SLA_WARNING','SLA_BREACHED')),
+                                    'SLA_WARNING','SLA_BREACHED','TIME_BASED')),
             condition_logic VARCHAR(3) NOT NULL DEFAULT 'AND'
                                 CHECK (condition_logic IN ('AND','OR')),
             conditions      JSONB NOT NULL DEFAULT '[]',
@@ -329,6 +329,24 @@ def ensure_crm_tables() -> None:
             updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """,
+
+        # 14. crm_group_integrations
+        """
+        CREATE TABLE IF NOT EXISTS kirana_kart.crm_group_integrations (
+            id           SERIAL PRIMARY KEY,
+            group_id     INTEGER NOT NULL REFERENCES kirana_kart.crm_groups(id) ON DELETE CASCADE,
+            type         VARCHAR(30) NOT NULL CHECK (type IN ('SMTP_INBOUND','API_KEY','WEBHOOK','CARDINAL_RULE')),
+            name         VARCHAR(100) NOT NULL,
+            config       JSONB NOT NULL DEFAULT '{}',
+            is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+            api_key      VARCHAR(100) UNIQUE,
+            created_by   INTEGER REFERENCES kirana_kart.users(id) ON DELETE SET NULL,
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_crm_integrations_group  ON kirana_kart.crm_group_integrations(group_id)",
+        "CREATE INDEX IF NOT EXISTS idx_crm_integrations_apikey ON kirana_kart.crm_group_integrations(api_key) WHERE api_key IS NOT NULL",
 
         # group_id column on hitl_queue
         """
@@ -1177,6 +1195,13 @@ def take_action(
 
         else:
             raise ValueError(f"Unknown action_type: {action_type}")
+
+    # Fire TICKET_UPDATED automation rules (non-fatal, outside session)
+    try:
+        from app.admin.services.crm_automation_engine import on_ticket_updated
+        on_ticket_updated(queue_id)
+    except Exception as _ae:
+        logger.debug("TICKET_UPDATED automation skipped for queue_id=%s: %s", queue_id, _ae)
 
     return get_queue_item(queue_id) or {}
 
@@ -2357,8 +2382,8 @@ def update_automation_rule(
     if name is not None:          updates.append("name = :name");           params["name"] = name
     if description is not None:   updates.append("description = :desc");    params["desc"] = description
     if trigger_event is not None: updates.append("trigger_event = :trigger"); params["trigger"] = trigger_event
-    if conditions is not None:    updates.append("conditions = :conds::jsonb"); params["conds"] = json.dumps(conditions)
-    if actions is not None:       updates.append("actions = :acts::jsonb");  params["acts"] = json.dumps(actions)
+    if conditions is not None:    updates.append("conditions = CAST(:conds AS jsonb)"); params["conds"] = json.dumps(conditions)
+    if actions is not None:       updates.append("actions = CAST(:acts AS jsonb)");  params["acts"] = json.dumps(actions)
     if condition_logic is not None: updates.append("condition_logic = :logic"); params["logic"] = condition_logic
     if priority is not None:      updates.append("priority = :priority");   params["priority"] = priority
     if is_active is not None:     updates.append("is_active = :active");    params["active"] = is_active
@@ -2390,3 +2415,445 @@ def toggle_automation_rule(rule_id: int) -> bool:
             {"rid": rule_id},
         ).fetchone()
         return row.is_active if row else False
+
+
+# ---------------------------------------------------------------------------
+# Group Integrations
+# ---------------------------------------------------------------------------
+
+import secrets as _secrets
+
+
+def list_group_integrations(group_id: int) -> list[dict]:
+    with get_db_session() as session:
+        rows = session.execute(
+            text("""
+                SELECT id, group_id, type, name, config, is_active,
+                       CASE WHEN api_key IS NOT NULL
+                            THEN CONCAT(LEFT(api_key,8), '••••••••')
+                            ELSE NULL END AS api_key_masked,
+                       api_key,
+                       created_at, updated_at
+                FROM kirana_kart.crm_group_integrations
+                WHERE group_id = :gid
+                ORDER BY created_at ASC
+            """),
+            {"gid": group_id},
+        ).mappings().fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            # Mask full api key; only return masked version
+            d.pop("api_key", None)
+            result.append(d)
+        return result
+
+
+def create_group_integration(
+    group_id: int,
+    integration_type: str,
+    name: str,
+    config: dict,
+    creator_id: int,
+) -> dict:
+    valid_types = {"SMTP_INBOUND", "API_KEY", "WEBHOOK", "CARDINAL_RULE"}
+    if integration_type not in valid_types:
+        raise ValueError(f"Invalid type: {integration_type}")
+    api_key = None
+    if integration_type == "API_KEY":
+        api_key = f"kk_grp_{_secrets.token_urlsafe(24)}"
+    with get_db_session() as session:
+        import json as _json
+        row = session.execute(
+            text("""
+                INSERT INTO kirana_kart.crm_group_integrations
+                    (group_id, type, name, config, api_key, created_by)
+                VALUES (:gid, :type, :name, CAST(:config AS jsonb), :key, :creator)
+                RETURNING id, group_id, type, name, config, is_active, api_key, created_at
+            """),
+            {
+                "gid": group_id, "type": integration_type, "name": name,
+                "config": _json.dumps(config), "key": api_key, "creator": creator_id,
+            },
+        ).mappings().first()
+        result = dict(row)
+        if integration_type == "API_KEY" and api_key:
+            result["api_key_full"] = api_key  # Return full key only on creation
+            result["api_key_masked"] = api_key[:8] + "••••••••"
+        result.pop("api_key", None)
+        return result
+
+
+def update_group_integration(
+    integration_id: int,
+    config: dict | None = None,
+    is_active: bool | None = None,
+    name: str | None = None,
+) -> dict | None:
+    import json as _json
+    updates = ["updated_at = NOW()"]
+    params: dict[str, Any] = {"iid": integration_id}
+    if config is not None:
+        updates.append("config = CAST(:config AS jsonb)")
+        params["config"] = _json.dumps(config)
+    if is_active is not None:
+        updates.append("is_active = :active")
+        params["active"] = is_active
+    if name is not None:
+        updates.append("name = :name")
+        params["name"] = name
+    with get_db_session() as session:
+        session.execute(
+            text(f"UPDATE kirana_kart.crm_group_integrations SET {', '.join(updates)} WHERE id = :iid"),
+            params,
+        )
+    return {"id": integration_id, "updated": True}
+
+
+def delete_group_integration(integration_id: int) -> None:
+    with get_db_session() as session:
+        session.execute(
+            text("DELETE FROM kirana_kart.crm_group_integrations WHERE id = :iid"),
+            {"iid": integration_id},
+        )
+
+
+def regenerate_api_key(integration_id: int) -> dict:
+    new_key = f"kk_grp_{_secrets.token_urlsafe(24)}"
+    with get_db_session() as session:
+        row = session.execute(
+            text("""
+                UPDATE kirana_kart.crm_group_integrations
+                SET api_key = :key, updated_at = NOW()
+                WHERE id = :iid AND type = 'API_KEY'
+                RETURNING id
+            """),
+            {"key": new_key, "iid": integration_id},
+        ).fetchone()
+        if not row:
+            raise ValueError("API_KEY integration not found")
+    return {
+        "integration_id": integration_id,
+        "api_key_full": new_key,
+        "api_key_masked": new_key[:8] + "••••••••",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Test Ticket Seeding
+# ---------------------------------------------------------------------------
+
+TEST_SCENARIOS = [
+    {
+        "subject": "Order #ORD-2841 never arrived — GPS shows driver left area",
+        "description": "I placed an order at 7:30 PM. The driver marked it delivered but I never received it. GPS shows the driver was 2km away from my address. Please refund.",
+        "cx_email": "priya.sharma@gmail.com",
+        "module": "delivery",
+        "automation_pathway": "HITL",
+        "queue_type": "STANDARD_REVIEW",
+        "ai_action_code": "REFUND_FULL",
+        "ai_refund_amount": 450.00,
+        "ai_confidence": 0.88,
+        "ai_fraud_segment": "LOW",
+        "ai_reasoning": "GPS data confirms driver did not reach customer address (distance: 2.1km). Delivery failure verified. Full refund eligible per R-001.",
+        "customer_segment": "standard",
+        "priority": 3,
+        "label": "Undelivered - GPS Unconfirmed",
+    },
+    {
+        "subject": "Found a cockroach in my biryani — food safety issue",
+        "description": "Received my order and found a cockroach inside the food container. This is a severe food safety violation. Attaching photo evidence. Demand full refund plus compensation.",
+        "cx_email": "rahul.verma@outlook.com",
+        "module": "quality",
+        "automation_pathway": "HITL",
+        "queue_type": "STANDARD_REVIEW",
+        "ai_action_code": "REFUND_FULL",
+        "ai_refund_amount": 320.00,
+        "ai_confidence": 0.94,
+        "ai_fraud_segment": "LOW",
+        "ai_reasoning": "Food safety violation confirmed. Foreign object (cockroach) reported with photo evidence within 2-hour complaint window. Full refund + ₹100 compensation per R-007 food safety matrix.",
+        "customer_segment": "gold",
+        "priority": 2,
+        "label": "Food Safety - Foreign Object",
+    },
+    {
+        "subject": "Refund request for missing items in order",
+        "description": "5 items in my order were missing. This is the 4th time this month I am raising a complaint. Please process my refund immediately.",
+        "cx_email": "frequent.complainer@yahoo.com",
+        "module": "missing_items",
+        "automation_pathway": "MANUAL_REVIEW",
+        "queue_type": "MANUAL_REVIEW",
+        "ai_action_code": "MANUAL_REVIEW_REPEAT",
+        "ai_refund_amount": None,
+        "ai_confidence": 0.95,
+        "ai_fraud_segment": "MEDIUM",
+        "ai_reasoning": "Customer has 4 refund requests in the last 30 days, exceeding the 3-request threshold. Flagged for manual review per R-004.",
+        "customer_segment": "standard",
+        "priority": 2,
+        "label": "Repeat Refunder - Manual Review Required",
+    },
+    {
+        "subject": "Premium order for corporate event completely spoiled",
+        "description": "Ordered catering worth ₹2,800 for our office event. All food arrived cold and spoiled. This is unacceptable for a premium order. Need full refund immediately.",
+        "cx_email": "corporate.client@techcorp.com",
+        "module": "quality",
+        "automation_pathway": "HITL",
+        "queue_type": "SENIOR_REVIEW",
+        "ai_action_code": "ESCALATE_MANAGER",
+        "ai_refund_amount": 2800.00,
+        "ai_confidence": 0.86,
+        "ai_fraud_segment": "LOW",
+        "ai_reasoning": "Refund amount ₹2,800 exceeds ₹2,000 threshold. Manager approval required per R-006 escalation matrix. Quality issue (QUALITY_SPOILED) confirmed.",
+        "customer_segment": "platinum",
+        "priority": 1,
+        "label": "High-Value Escalation - Manager Approval",
+    },
+    {
+        "subject": "Delivery boy denied access — GPS data not available",
+        "description": "The delivery person claims he tried to deliver but I was home all evening. There is no GPS record for my order delivery in the app. Please investigate and refund.",
+        "cx_email": "ananya.krishnan@gmail.com",
+        "module": "delivery",
+        "automation_pathway": "MANUAL_REVIEW",
+        "queue_type": "MANUAL_REVIEW",
+        "ai_action_code": "MANUAL_REVIEW_GPS_MISSING",
+        "ai_refund_amount": None,
+        "ai_confidence": 0.70,
+        "ai_fraud_segment": "LOW",
+        "ai_reasoning": "No GPS delivery event found in delivery_events table for this order_id. Cannot verify delivery status. Human verification required per GPS-001.",
+        "customer_segment": "standard",
+        "priority": 3,
+        "label": "GPS Data Missing - Manual Verification",
+    },
+    {
+        "subject": "I did not receive my order but it shows delivered",
+        "description": "App shows delivered but I never got my food. This has happened multiple times. I have filed GPS disputes before. My refund rate might be high but this is genuine.",
+        "cx_email": "suspicious.user@gmail.com",
+        "module": "delivery",
+        "automation_pathway": "MANUAL_REVIEW",
+        "queue_type": "ESCALATION_QUEUE",
+        "ai_action_code": "REJECT_FRAUD",
+        "ai_refund_amount": 0.00,
+        "ai_confidence": 0.95,
+        "ai_fraud_segment": "VERY_HIGH",
+        "ai_reasoning": "Multiple fraud signals triggered: refund_rate_30d=0.73 (>0.5), complaints_30d=8 (>5), marked_delivered_90d=5 (>3). Greedy classification: FRAUD. Rejecting refund and flagging for investigation.",
+        "customer_segment": "standard",
+        "priority": 1,
+        "label": "Fraud Detected - VERY_HIGH Risk",
+    },
+    {
+        "subject": "Missing 3 items from my order, want partial refund",
+        "description": "Ordered biryani, raita and dessert. Only biryani arrived. Missing raita (₹150) and gulab jamun (₹120). Please refund for missing items.",
+        "cx_email": "normal.customer@gmail.com",
+        "module": "missing_items",
+        "automation_pathway": "HITL",
+        "queue_type": "STANDARD_REVIEW",
+        "ai_action_code": "ESCALATE_GRADE3",
+        "ai_refund_amount": 750.00,
+        "ai_confidence": 0.85,
+        "ai_fraud_segment": "LOW",
+        "ai_reasoning": "Missing items confirmed (MISSING_ITEMS_PARTIAL). Refund amount ₹750 is in ₹501-₹999 range requiring Grade 3 agent sign-off per R-006.",
+        "customer_segment": "standard",
+        "priority": 2,
+        "label": "Grade 3 Escalation - ₹750 Refund",
+    },
+    {
+        "subject": "Food arrived but not sure if quality issue or normal",
+        "description": "My food arrived and it looks slightly different from the photo. Temperature seems off. Not sure if this is a genuine complaint or expected variation. Need guidance.",
+        "cx_email": "unsure.customer@gmail.com",
+        "module": "quality",
+        "automation_pathway": "HITL",
+        "queue_type": "STANDARD_REVIEW",
+        "ai_action_code": "REFUND_PARTIAL",
+        "ai_refund_amount": 180.00,
+        "ai_confidence": 0.38,
+        "ai_fraud_segment": "LOW",
+        "ai_reasoning": "Ambiguous quality complaint. Low confidence in classification. Evidence unclear — temperature complaint may qualify for partial refund (QUALITY_TEMPERATURE_COLD: 40%) but uncertain. Requires human review.",
+        "customer_segment": "standard",
+        "priority": 2,
+        "label": "Low Confidence - Human Review Needed",
+    },
+    {
+        "subject": "Order delivered but food was completely spoiled",
+        "description": "Received my order but everything was rotten and had a strong smell. This cannot be eaten. I deserve a full refund for this health hazard.",
+        "cx_email": "high.value.customer@gmail.com",
+        "module": "quality",
+        "automation_pathway": "HITL",
+        "queue_type": "STANDARD_REVIEW",
+        "ai_action_code": "REFUND_FULL",
+        "ai_refund_amount": 600.00,
+        "ai_confidence": 0.82,
+        "ai_fraud_segment": "HIGH",
+        "ai_reasoning": "QUALITY_SPOILED confirmed. Full refund eligible per R-007. Note: fraud_segment=HIGH due to refund_rate_30d=0.52. Flagged for senior review before processing.",
+        "customer_segment": "gold",
+        "priority": 2,
+        "label": "Suspicious High-Refund - Fraud HIGH + ₹600",
+    },
+    {
+        "subject": "Food was cold and portion sizes were very small",
+        "description": "Ordered dal makhani and paneer butter masala. Both arrived cold (below room temperature) and portions were half of what I normally get. Requesting partial refund.",
+        "cx_email": "regular.customer@gmail.com",
+        "module": "quality",
+        "automation_pathway": "HITL",
+        "queue_type": "STANDARD_REVIEW",
+        "ai_action_code": "REFUND_PARTIAL",
+        "ai_refund_amount": 350.00,
+        "ai_confidence": 0.90,
+        "ai_fraud_segment": "LOW",
+        "ai_reasoning": "QUALITY_TEMPERATURE_COLD (40%) + QUALITY_PORTION_SMALL (30%) = combined partial refund at 35% of ₹980 = ₹343 (rounded to ₹350). Evidence submitted within 2-hour window.",
+        "customer_segment": "standard",
+        "priority": 3,
+        "label": "Quality Issue - Cold + Small Portions",
+    },
+]
+
+
+def seed_test_tickets() -> dict:
+    """Create 10 test tickets directly in the queue to demonstrate the full CRM flow."""
+    import json as _json
+
+    created = []
+    skipped = 0
+
+    with get_db_session() as session:
+        # Check if test tickets already exist (by checking for specific test emails)
+        test_emails = [s["cx_email"] for s in TEST_SCENARIOS]
+        existing = session.execute(
+            text("""
+                SELECT DISTINCT cx_email FROM kirana_kart.hitl_queue
+                WHERE cx_email = ANY(:emails)
+            """),
+            {"emails": test_emails},
+        ).fetchall()
+        existing_emails = {r[0] for r in existing}
+
+    for scenario in TEST_SCENARIOS:
+        if scenario["cx_email"] in existing_emails:
+            skipped += 1
+            continue
+
+        try:
+            with get_db_session() as session:
+                # 1. Generate a unique ticket_id (fdraw.ticket_id has no default)
+                max_row = session.execute(
+                    text("SELECT COALESCE(MAX(ticket_id), 990000) + 1 FROM kirana_kart.fdraw")
+                ).fetchone()
+                ticket_id = max_row[0] + len(created)
+
+                # Insert into fdraw (raw ticket) - requires ticket_id and group_id
+                session.execute(
+                    text("""
+                        INSERT INTO kirana_kart.fdraw
+                            (ticket_id, group_id, subject, description, cx_email, module, created_at)
+                        VALUES (:tid, '1', :subject, :desc, :email, :module, NOW())
+                    """),
+                    {
+                        "tid": ticket_id,
+                        "subject": scenario["subject"],
+                        "desc": scenario["description"],
+                        "email": scenario["cx_email"],
+                        "module": scenario["module"],
+                    },
+                )
+
+                # 2. Compute SLA timestamps
+                queue_type = scenario["queue_type"]
+                sla_minutes = _get_sla_resolution_minutes(queue_type)
+                fr_minutes = _get_sla_first_response_minutes(queue_type)
+                now = _now()
+                sla_due = now + timedelta(minutes=sla_minutes)
+                fr_due = now + timedelta(minutes=fr_minutes)
+
+                # 3. Insert into hitl_queue
+                hq_row = session.execute(
+                    text("""
+                        INSERT INTO kirana_kart.hitl_queue (
+                            ticket_id, automation_pathway, queue_type, status, priority,
+                            sla_due_at, first_response_due_at,
+                            ai_action_code, ai_refund_amount, ai_confidence,
+                            ai_fraud_segment, ai_reasoning,
+                            cx_email, customer_segment, subject,
+                            created_at, updated_at
+                        ) VALUES (
+                            :tid, :pathway, :qtype, 'OPEN', :priority,
+                            :sla_due, :fr_due,
+                            :ai_code, :ai_refund, :ai_conf,
+                            :ai_fraud, :ai_reason,
+                            :email, :segment, :subject,
+                            NOW(), NOW()
+                        )
+                        RETURNING id
+                    """),
+                    {
+                        "tid": ticket_id,
+                        "pathway": scenario["automation_pathway"],
+                        "qtype": queue_type,
+                        "priority": scenario["priority"],
+                        "sla_due": sla_due,
+                        "fr_due": fr_due,
+                        "ai_code": scenario["ai_action_code"],
+                        "ai_refund": scenario.get("ai_refund_amount"),
+                        "ai_conf": scenario["ai_confidence"],
+                        "ai_fraud": scenario["ai_fraud_segment"],
+                        "ai_reason": scenario.get("ai_reasoning"),
+                        "email": scenario["cx_email"],
+                        "segment": scenario["customer_segment"],
+                        "subject": scenario["subject"],
+                    },
+                ).fetchone()
+                queue_id = hq_row[0]
+
+            # 4. Run automation rules (non-fatal, outside session)
+            try:
+                from app.admin.services.crm_automation_engine import run_for_ticket
+                rules_applied = run_for_ticket("TICKET_CREATED", queue_id)
+            except Exception as ae:
+                logger.warning("Automation for test ticket %d failed: %s", queue_id, ae)
+                rules_applied = 0
+
+            created.append({
+                "ticket_id": ticket_id,
+                "queue_id": queue_id,
+                "label": scenario["label"],
+                "queue_type": queue_type,
+                "ai_action_code": scenario["ai_action_code"],
+                "rules_applied": rules_applied,
+            })
+
+        except Exception as e:
+            logger.error("Failed to seed test ticket '%s': %s", scenario["label"], e)
+
+    return {
+        "created": len(created),
+        "skipped": skipped,
+        "tickets": created,
+    }
+
+
+def _get_sla_resolution_minutes(queue_type: str) -> int:
+    """Get resolution SLA minutes from DB with fallback."""
+    try:
+        with get_db_session() as session:
+            row = session.execute(
+                text("SELECT resolution_minutes FROM kirana_kart.crm_sla_policies WHERE queue_type = :qt"),
+                {"qt": queue_type},
+            ).fetchone()
+            if row:
+                return row[0]
+    except Exception:
+        pass
+    return SLA_RESOLUTION_MINUTES.get(queue_type, 480)
+
+
+def _get_sla_first_response_minutes(queue_type: str) -> int:
+    """Get first response SLA minutes from DB with fallback."""
+    try:
+        with get_db_session() as session:
+            row = session.execute(
+                text("SELECT first_response_minutes FROM kirana_kart.crm_sla_policies WHERE queue_type = :qt"),
+                {"qt": queue_type},
+            ).fetchone()
+            if row:
+                return row[0]
+    except Exception:
+        pass
+    return SLA_FIRST_RESPONSE_MINUTES.get(queue_type, 60)

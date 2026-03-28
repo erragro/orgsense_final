@@ -366,7 +366,7 @@ export interface AutomationRule {
   id: number
   name: string
   description: string | null
-  trigger_event: string
+  trigger_event: 'TICKET_CREATED' | 'TICKET_UPDATED' | 'SLA_WARNING' | 'SLA_BREACHED' | 'TIME_BASED'
   condition_logic: 'AND' | 'OR'
   conditions: RuleCondition[]
   actions: RuleAction[]
@@ -392,4 +392,23 @@ export interface SLAPolicy {
   is_active: boolean
   updated_at: string | null
   updated_by_name: string | null
+}
+
+// -------------------------------------------------------------------------
+// Group Integrations
+// -------------------------------------------------------------------------
+
+export type IntegrationType = 'SMTP_INBOUND' | 'API_KEY' | 'WEBHOOK' | 'CARDINAL_RULE'
+
+export interface GroupIntegration {
+  id: number
+  group_id: number
+  type: IntegrationType
+  name: string
+  config: Record<string, unknown>
+  is_active: boolean
+  api_key_masked: string | null
+  api_key_full?: string  // Only returned on creation/regeneration
+  created_at: string
+  updated_at: string
 }

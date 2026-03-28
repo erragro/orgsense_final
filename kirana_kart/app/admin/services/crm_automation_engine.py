@@ -35,27 +35,32 @@ logger = logging.getLogger("kirana_kart.crm.automation")
 # ---------------------------------------------------------------------------
 
 CONDITION_FIELDS: dict[str, str] = {
-    "queue_type":        "queue_type",
-    "status":            "status",
-    "priority":          "priority",
-    "customer_segment":  "customer_segment",
-    "ai_action_code":    "ai_action_code",
-    "ai_confidence":     "ai_confidence",
-    "ai_fraud_segment":  "ai_fraud_segment",
-    "ai_refund_amount":  "ai_refund_amount",
-    "automation_pathway": "automation_pathway",
+    "queue_type":           "queue_type",
+    "status":               "status",
+    "priority":             "priority",
+    "customer_segment":     "customer_segment",
+    "ai_action_code":       "ai_action_code",
+    "ai_confidence":        "ai_confidence",
+    "ai_fraud_segment":     "ai_fraud_segment",
+    "ai_refund_amount":     "ai_refund_amount",
+    "automation_pathway":   "automation_pathway",
+    # Computed time-based fields (not DB columns; computed at eval time)
+    "hours_since_created":  "__computed__",
+    "hours_since_updated":  "__computed__",
 }
 
 CONDITION_FIELD_LABELS: dict[str, str] = {
-    "queue_type":        "Queue Type",
-    "status":            "Status",
-    "priority":          "Priority",
-    "customer_segment":  "Customer Segment",
-    "ai_action_code":    "AI Action Code",
-    "ai_confidence":     "AI Confidence",
-    "ai_fraud_segment":  "Fraud Segment",
-    "ai_refund_amount":  "AI Refund Amount",
-    "automation_pathway": "Automation Pathway",
+    "queue_type":           "Queue Type",
+    "status":               "Status",
+    "priority":             "Priority",
+    "customer_segment":     "Customer Segment",
+    "ai_action_code":       "AI Action Code",
+    "ai_confidence":        "AI Confidence",
+    "ai_fraud_segment":     "Fraud Segment",
+    "ai_refund_amount":     "AI Refund Amount",
+    "automation_pathway":   "Automation Pathway",
+    "hours_since_created":  "Hours Since Created",
+    "hours_since_updated":  "Hours Since Last Update",
 }
 
 OPERATORS = ["eq", "ne", "gt", "lt", "gte", "lte", "contains", "in"]
@@ -171,6 +176,7 @@ def _coerce(value: Any, target: Any) -> Any:
 
 
 def _matches_condition(condition: dict, queue_item: dict) -> bool:
+    from datetime import datetime, timezone as _tz
     field = condition.get("field")
     operator = condition.get("operator")
     expected = condition.get("value")
@@ -178,7 +184,36 @@ def _matches_condition(condition: dict, queue_item: dict) -> bool:
     if field not in CONDITION_FIELDS:
         return False
 
-    actual = queue_item.get(field)
+    # Computed time fields
+    if field == "hours_since_created":
+        created = queue_item.get("created_at")
+        if created is None:
+            return False
+        if isinstance(created, str):
+            from datetime import datetime
+            try:
+                created = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            except ValueError:
+                return False
+        now = datetime.now(_tz.utc)
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=_tz.utc)
+        actual = (now - created).total_seconds() / 3600.0
+    elif field == "hours_since_updated":
+        updated = queue_item.get("updated_at")
+        if updated is None:
+            return False
+        if isinstance(updated, str):
+            try:
+                updated = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+            except ValueError:
+                return False
+        now = datetime.now(_tz.utc)
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=_tz.utc)
+        actual = (now - updated).total_seconds() / 3600.0
+    else:
+        actual = queue_item.get(field)
     if actual is None:
         # None only matches "eq None" (not typically used)
         return operator == "eq" and (expected is None or expected == "")
@@ -246,7 +281,7 @@ def _apply_action(action: dict, queue_id: int, ticket_id: int, session) -> None:
                         (ticket_id, queue_id, actor_id, action_type, before_value, after_value, reason)
                     VALUES
                         (:tid, :qid, :actor, 'CHANGE_PRIORITY', NULL,
-                         :after::jsonb, 'Automation rule')
+                         CAST(:after AS jsonb), 'Automation rule')
                 """),
                 {
                     "tid": ticket_id, "qid": queue_id, "actor": system_actor,
@@ -277,7 +312,7 @@ def _apply_action(action: dict, queue_id: int, ticket_id: int, session) -> None:
                 text("""
                     INSERT INTO kirana_kart.crm_agent_actions
                         (ticket_id, queue_id, actor_id, action_type, after_value, reason)
-                    VALUES (:tid, :qid, :actor, 'CHANGE_QUEUE', :after::jsonb, 'Automation rule')
+                    VALUES (:tid, :qid, :actor, 'CHANGE_QUEUE', CAST(:after AS jsonb), 'Automation rule')
                 """),
                 {
                     "tid": ticket_id, "qid": queue_id, "actor": system_actor,
@@ -540,7 +575,8 @@ def run_for_ticket(trigger: str, queue_id: int) -> int:
                 text("""
                     SELECT hq.id, hq.ticket_id, hq.queue_type, hq.status, hq.priority,
                            hq.customer_segment, hq.ai_action_code, hq.ai_confidence,
-                           hq.ai_fraud_segment, hq.ai_refund_amount, hq.automation_pathway
+                           hq.ai_fraud_segment, hq.ai_refund_amount, hq.automation_pathway,
+                           hq.created_at, hq.updated_at
                     FROM kirana_kart.hitl_queue hq
                     WHERE hq.id = :qid
                 """),
@@ -770,9 +806,66 @@ def get_condition_schema() -> dict:
             {"key": "escalate",         "label": "Escalate"},
         ],
         "triggers": [
-            {"key": "TICKET_CREATED",  "label": "Ticket Created"},
-            {"key": "TICKET_UPDATED",  "label": "Ticket Updated"},
-            {"key": "SLA_WARNING",     "label": "SLA Warning (15 min before breach)"},
-            {"key": "SLA_BREACHED",    "label": "SLA Breached"},
+            {"key": "TICKET_CREATED",  "label": "Ticket Created",                     "description": "Fires immediately when a new ticket enters the queue"},
+            {"key": "TICKET_UPDATED",  "label": "Ticket Updated",                     "description": "Fires when any field on a ticket is changed by an agent"},
+            {"key": "SLA_WARNING",     "label": "SLA Warning (15 min before breach)", "description": "Fires 15 minutes before the SLA deadline is hit"},
+            {"key": "SLA_BREACHED",    "label": "SLA Breached",                       "description": "Fires when the SLA deadline is exceeded"},
+            {"key": "TIME_BASED",      "label": "Time-Based (Periodic)",              "description": "Evaluated periodically; use hours_since_created / hours_since_updated conditions"},
+        ],
+        "time_fields": [
+            {"key": "hours_since_created", "label": "Hours Since Created"},
+            {"key": "hours_since_updated", "label": "Hours Since Last Update"},
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# TIME_BASED periodic runner (Celery Beat helper)
+# ---------------------------------------------------------------------------
+
+def run_time_based_rules() -> int:
+    """
+    Called by Celery Beat (every 15 min).
+    Evaluates all active TIME_BASED rules against open/in-progress tickets.
+    Returns total number of rule applications.
+    """
+    total_applied = 0
+    try:
+        with get_db_session() as session:
+            # Fetch all open/in-progress queue IDs
+            rows = session.execute(
+                text("""
+                    SELECT id FROM kirana_kart.hitl_queue
+                    WHERE status NOT IN ('RESOLVED','CLOSED')
+                    ORDER BY created_at ASC
+                    LIMIT 500
+                """)
+            ).fetchall()
+
+        for row in rows:
+            n = run_for_ticket("TIME_BASED", row.id)
+            total_applied += n
+
+    except Exception as exc:
+        logger.error("run_time_based_rules failed: %s", exc)
+
+    if total_applied:
+        logger.info("TIME_BASED rules: %d applications across open tickets", total_applied)
+    return total_applied
+
+
+# ---------------------------------------------------------------------------
+# TICKET_UPDATED integration helper
+# ---------------------------------------------------------------------------
+
+def on_ticket_updated(queue_id: int) -> int:
+    """
+    Call this after any agent action mutates a ticket.
+    Evaluates TICKET_UPDATED automation rules for the ticket.
+    Non-fatal — errors are logged and swallowed.
+    """
+    try:
+        return run_for_ticket("TICKET_UPDATED", queue_id)
+    except Exception as exc:
+        logger.warning("on_ticket_updated failed for queue_id=%s: %s", queue_id, exc)
+        return 0

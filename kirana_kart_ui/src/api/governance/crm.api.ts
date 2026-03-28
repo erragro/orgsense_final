@@ -17,6 +17,7 @@ import type {
   Group,
   AutomationRule,
   SLAPolicy,
+  GroupIntegration,
 } from '@/types/crm.types'
 
 export const crmApi = {
@@ -186,6 +187,18 @@ export const crmApi = {
       governanceClient.delete(`/crm/groups/${groupId}/members/${userId}`),
     assignTicket: (queueId: number, groupId: number) =>
       governanceClient.post(`/crm/queue/${queueId}/assign-group`, { group_id: groupId }),
+    getIntegrations: (groupId: number) =>
+      governanceClient.get<GroupIntegration[]>(`/crm/groups/${groupId}/integrations`),
+    createIntegration: (groupId: number, body: { type: string; name: string; config?: Record<string, unknown> }) =>
+      governanceClient.post<GroupIntegration>(`/crm/groups/${groupId}/integrations`, body),
+    updateIntegration: (groupId: number, integrationId: number, body: Partial<GroupIntegration>) =>
+      governanceClient.patch<GroupIntegration>(`/crm/groups/${groupId}/integrations/${integrationId}`, body),
+    deleteIntegration: (groupId: number, integrationId: number) =>
+      governanceClient.delete(`/crm/groups/${groupId}/integrations/${integrationId}`),
+    generateApiKey: (groupId: number, body: { name: string }) =>
+      governanceClient.post<GroupIntegration>(`/crm/groups/${groupId}/integrations/generate-key`, body),
+    regenerateApiKey: (groupId: number, integrationId: number) =>
+      governanceClient.post<GroupIntegration>(`/crm/groups/${groupId}/integrations/${integrationId}/regenerate-key`),
   },
 
   // -------------------------------------------------------------------------
@@ -222,6 +235,12 @@ export const crmApi = {
     update: (queueType: string, body: { resolution_minutes?: number; first_response_minutes?: number }) =>
       governanceClient.patch<SLAPolicy>(`/crm/sla-policies/${queueType}`, body),
   },
+
+  // -------------------------------------------------------------------------
+  // Admin
+  // -------------------------------------------------------------------------
+  seedTestTickets: () =>
+    governanceClient.post<{ created: number; skipped: number; tickets: unknown[] }>('/crm/admin/seed-test-tickets'),
 }
 
 // -------------------------------------------------------------------------
