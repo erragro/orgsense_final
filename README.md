@@ -9,7 +9,7 @@
 
 Kirana Kart is a **full-stack AI-powered policy governance, automated ticket-resolution, and CRM platform** for e-commerce / quick-commerce customer support.
 
-It manages the complete lifecycle of business rules — from human-authored knowledge base documents through multi-model LLM compilation, vectorized policy versions, automated 4-stage Cardinal pipeline evaluation, and a Freshdesk-equivalent CRM for human-in-the-loop (HITL) ticket resolution.
+It manages the complete lifecycle of business rules — from human-authored knowledge base documents through multi-model LLM compilation, vectorized policy versions, automated 4-stage Cardinal pipeline evaluation, and a CRM UI for human-in-the-loop (HITL) ticket resolution.
 
 **Scale:** ~2.2M support chats/month · 18M orders/month · ₹12.4 Crore/month refund leakage governed by versioned, auditable AI policies.
 
