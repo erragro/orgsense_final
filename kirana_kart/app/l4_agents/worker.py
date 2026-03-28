@@ -463,6 +463,52 @@ def process_ticket(
         # ----------------------------------------------------------
         _ack_message(stream_name, msg_id)
 
+        # ----------------------------------------------------------
+        # CRM enqueue (non-fatal) — HITL / MANUAL_REVIEW tickets
+        # ----------------------------------------------------------
+        if automation_pathway in ("HITL", "MANUAL_REVIEW"):
+            try:
+                from app.admin.services.crm_service import enqueue_ticket
+                _queue_type_map = {
+                    "MANUAL_REVIEW": "MANUAL_REVIEW",
+                    "HITL": fields.get("recommended_queue", "STANDARD_REVIEW"),
+                }
+                _priority_map = {
+                    "ESCALATION_QUEUE": 1,
+                    "SLA_BREACH_REVIEW": 2,
+                    "SENIOR_REVIEW": 2,
+                }
+                _qt = _queue_type_map.get(automation_pathway, "STANDARD_REVIEW")
+                if _qt not in ("STANDARD_REVIEW","SENIOR_REVIEW","SLA_BREACH_REVIEW","ESCALATION_QUEUE","MANUAL_REVIEW"):
+                    _qt = "STANDARD_REVIEW"
+                _customer_profile = (fields.get("customer_profile") or {})
+                enqueue_ticket(
+                    ticket_id=ticket_id,
+                    automation_pathway=automation_pathway,
+                    queue_type=_qt,
+                    ai_action_code=stage2_result.get("final_action_code"),
+                    ai_refund_amount=stage2_result.get("final_refund_amount"),
+                    ai_reasoning=stage2_result.get("detailed_reasoning"),
+                    ai_confidence=stage2_result.get("overall_confidence"),
+                    ai_discrepancy_details=stage2_result.get("discrepancy_details"),
+                    ai_fraud_segment=(fields.get("greedy_classification") or stage2_result.get("greedy_classification")),
+                    customer_id=str(fields.get("customer_id", "")),
+                    order_id=str(fields.get("order_id", "")),
+                    cx_email=fields.get("cx_email"),
+                    customer_segment=_customer_profile.get("segment"),
+                    subject=fields.get("subject"),
+                    priority=_priority_map.get(_qt, 3),
+                )
+                logger.info(
+                    "CRM enqueue success | ticket_id=%s | pathway=%s | queue=%s",
+                    ticket_id, automation_pathway, _qt,
+                )
+            except Exception as _crm_exc:
+                logger.error(
+                    "CRM enqueue failed (non-fatal) | ticket_id=%s | %s",
+                    ticket_id, _crm_exc,
+                )
+
         final_action = stage2_result.get("final_action_code", "UNKNOWN")
         logger.info(
             "Task complete | execution_id=%s | ticket_id=%s | action=%s",

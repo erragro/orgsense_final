@@ -29,6 +29,7 @@ from app.admin.routes.bi_agent import ensure_bi_tables
 from app.admin.routes.qa_agent import ensure_qa_tables
 from app.admin.routes.cardinal import ensure_schedule_table, ensure_master_action_codes_constraints
 from app.admin.services.integration_service import ensure_integration_tables, run_integration_poller
+from app.admin.services.crm_service import ensure_crm_tables
 
 import logging
 
@@ -115,6 +116,7 @@ async def lifespan(app: FastAPI):
     ensure_qa_tables()
     ensure_schedule_table()
     ensure_master_action_codes_constraints()
+    ensure_crm_tables()
     ensure_integration_tables()
     threading.Thread(
         target=run_integration_poller,
@@ -150,7 +152,9 @@ app.add_middleware(
     allow_origins=[
         settings.frontend_url,
         "http://localhost:5173", "http://127.0.0.1:5173",
-        # Allow any localhost port (Vite preview, dev tools)
+        # Allow any localhost port (Vite preview, dev tools, Claude preview)
+        *[f"http://localhost:{p}" for p in range(49000, 50000)],
+        *[f"http://127.0.0.1:{p}" for p in range(49000, 50000)],
         *[f"http://localhost:{p}" for p in range(51000, 51200)],
         *[f"http://127.0.0.1:{p}" for p in range(51000, 51200)],
     ],
@@ -186,6 +190,7 @@ from app.admin.routes.bi_agent import router as bi_agent_router
 from app.admin.routes.qa_agent import router as qa_agent_router
 from app.admin.routes.integrations import router as integrations_router
 from app.admin.routes.cardinal import router as cardinal_router
+from app.admin.routes.crm_routes import router as crm_router
 
 app.include_router(auth_router)
 app.include_router(session_router)
@@ -204,6 +209,7 @@ app.include_router(bi_agent_router)
 app.include_router(qa_agent_router)
 app.include_router(integrations_router)
 app.include_router(cardinal_router)
+app.include_router(crm_router)
 
 
 # ============================================================

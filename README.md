@@ -1,59 +1,28 @@
-# Kirana Kart — Policy Governance Platform
+# Kirana Kart — AI Policy Governance & CRM Platform
 
-**Version:** 4.0.0
+**Version:** 5.0.0
 **Stack:** FastAPI · React 19 · PostgreSQL · Weaviate · Redis · Celery · OpenAI · Docker
 
 ---
 
 ## What Is This?
 
-Kirana Kart is an **AI-powered policy governance and automated ticket-resolution engine** for e-commerce / quick-commerce customer support. It manages the full lifecycle of business rules — from human-authored documents through LLM compilation all the way to vectorized, published policy versions that power automated ticket resolution.
+Kirana Kart is a **full-stack AI-powered policy governance, automated ticket-resolution, and CRM platform** for e-commerce / quick-commerce customer support.
 
-The platform handles ~2.2M support chats/month, 18M orders/month, with ₹12.4 Crore/month refund leakage governed by versioned, auditable AI policies. The system closes four concrete business problems documented below.
+It manages the complete lifecycle of business rules — from human-authored knowledge base documents through multi-model LLM compilation, vectorized policy versions, automated 4-stage Cardinal pipeline evaluation, and a Freshdesk-equivalent CRM for human-in-the-loop (HITL) ticket resolution.
+
+**Scale:** ~2.2M support chats/month · 18M orders/month · ₹12.4 Crore/month refund leakage governed by versioned, auditable AI policies.
 
 ---
 
 ## Business Case Coverage
 
-Four problems drive the entire platform design:
-
 | # | Problem | Coverage | Key Components |
 |---|---|---|---|
-| **P1** | Refund fraud & policy leakage — ₹12.4 Cr/month | **~78%** | 4-stage LLM pipeline, deterministic rule engine, Weaviate vector retrieval, fraud signal computation, GPS enrichment, tier auto-approve |
+| **P1** | Refund fraud & policy leakage — ₹12.4 Cr/month | **~78%** | 4-stage Cardinal pipeline, deterministic rule engine, Weaviate vector retrieval, fraud signal computation, GPS enrichment, tier auto-approve |
 | **P2** | Agent quality invisible — 0.2% QA coverage | **~35%** | QA Agent (AI pipeline accuracy + 12 Python + 10 LLM checks), canned-response detector, grammar scorer, sentiment arc, per-agent daily scoring |
-| **P3** | Ticket spike root cause unknown — 3-day lag | **~35%** | BI Agent (reactive SQL), intent classifier, `l3_analytics/clustering_service.py` (HDBSCAN spike detection), spike reports analytics tab |
-| **P4** | True FCR overstated by 20 points | **~45%** | Intent classifier, `fcr` column, async 48h FCR checker Celery task, `l3_analytics/fcr_service.py`, FCR analytics tab |
-
-### Key Fixes & Additions (v4.0)
-
-- **KB rule pipeline**: `_fetch_rules` was silently returning zero rules for every ticket due to a vocabulary mismatch between ticket `module` labels ("delivery") and rule `module_name` values ("Fraud & Abuse Intelligence"). Removed the incorrect filter; all rules are now correctly fetched and applied.
-- **`policy_version` persisted**: The `llm_output_3` INSERT statement now writes the active policy version so QA Agent and analytics can trace which rule set governed each decision.
-- **QA Agent KB Evidence**: Fallback path now correctly queries `kb_runtime_config.active_version` (not the non-existent `kb_versions` table), enabling the KB Evidence panel to load rules from Weaviate.
-- **Analytics dashboard**: Three new tabs added — **True FCR**, **Spike Reports**, and **Agent Quality** — with lazy-loaded React Query hooks and full backend endpoints.
-- **GPS delivery enrichment**: `phase4_enricher.py` now pulls `gps_lat`/`gps_lng` from `delivery_events` and computes `gps_confirmed_delivery`, feeding Stage 1 fraud detection.
-- **R-005 tier auto-approve**: Gold/Platinum customers with a first claim on an order auto-resolve without escalation in `stage2_validator.py`.
-- **CORS extended**: Governance API now accepts requests from Vite preview server ports (51000–51199) in addition to the standard dev port 5173.
-
----
-
-## Table of Contents
-
-1. [Architecture](#architecture)
-2. [Quick Start](#quick-start)
-3. [Authentication & Access Control](#authentication--access-control)
-4. [OAuth Setup](#oauth-setup)
-5. [Services](#services)
-6. [Module Overview](#module-overview)
-7. [Policy Document Lifecycle](#policy-document-lifecycle)
-8. [Processing Pipeline](#processing-pipeline)
-9. [Database Schema](#database-schema)
-10. [API Reference](#api-reference)
-11. [Environment Variables](#environment-variables)
-12. [Common Commands](#common-commands)
-13. [Scripts & Data Generation](#scripts--data-generation)
-14. [Development Notes](#development-notes)
-15. [Troubleshooting](#troubleshooting)
-16. [Production Checklist](#production-checklist)
+| **P3** | Ticket spike root-cause unknown — 3-day lag | **~35%** | BI Agent (reactive SQL), intent classifier, HDBSCAN spike detection, spike report analytics |
+| **P4** | True FCR overstated by 20 points | **~45%** | Intent classifier, 48h async FCR checker Celery task, FCR analytics tab |
 
 ---
 
@@ -73,806 +42,464 @@ Four problems drive the entire platform design:
 │                  │                │                      │
 │ /auth/*          │                │ POST /ingest         │
 │ /users/*         │                │ (L1 5-phase pipeline)│
-│ /taxonomy/*      │                └──────────┬───────────┘
+│ /crm/*           │                └──────────┬───────────┘
 │ /kb/*            │                           │ Redis Streams
 │ /compiler/*      │                           ▼
-│ /vectorization/* │                ┌──────────────────────┐
-│ /simulation/*    │                │    worker-poll       │
-│ /analytics/*     │                │  (stream consumer)   │
-│ /bi-agent/*      │                └──────────┬───────────┘
-│ /system/*        │                           │ Celery tasks
-└──────┬───────────┘                           ▼
-       │                            ┌──────────────────────┐
-       ▼                            │   worker-celery      │
-┌──────────────────────────┐        │   (4-stage LLM       │
-│  PostgreSQL  :5432        │        │    pipeline)         │
-│  schema: kirana_kart     │        └──────────────────────┘
-│  44 tables · ~14K tickets│
-└──────────────────────────┘
-       │
-┌──────┴──────┐   ┌──────────────────┐
-│   Redis     │   │    Weaviate      │
-│   :6379     │   │    :8080         │
-│  Streams +  │   │  Vector search   │
-│  Celery     │   │  (KBRule class)  │
-└─────────────┘   └──────────────────┘
+│ /simulation/*    │                ┌──────────────────────┐
+│ /analytics/*     │                │    worker-poll       │
+└──────────────────┘                │    worker-celery     │
+         │                          │  (4-stage Cardinal)  │
+         ▼                          └──────────┬───────────┘
+┌──────────────────┐                           │
+│   PostgreSQL     │◄──────────────────────────┘
+│   :5432          │
+│  kirana_kart.*   │
+└──────────────────┘
+         │
+┌──────────────────┐    ┌──────────────────┐
+│    Weaviate      │    │      Redis       │
+│    :8080         │    │      :6379       │
+│ (vector search)  │    │ (streams/cache)  │
+└──────────────────┘    └──────────────────┘
 ```
+
+---
+
+## 8 Docker Containers
+
+| Container | Port | Role |
+|---|---|---|
+| `governance` | 8001 | FastAPI — admin, CRM, policy, analytics |
+| `ingest` | 8000 | FastAPI — ticket ingestion (5-phase pipeline) |
+| `postgres` | 5432 | PostgreSQL 14 — primary data store |
+| `redis` | 6379 | Redis 7 — streams + Celery broker |
+| `weaviate` | 8080 | Vector DB — rule candidates + issue taxonomy |
+| `worker-poll` | — | Stream poll loop (dispatches to Celery) |
+| `worker-celery` | — | Celery worker (4-stage Cardinal pipeline) |
+| `ui` | 5173 | React 19 + Vite — frontend |
 
 ---
 
 ## Quick Start
 
 ### Prerequisites
+- Docker + Docker Compose
+- OpenAI API key
 
-- Docker Desktop running
-- An OpenAI API key
-
-### 1. Clone
-
+### 1. Clone & configure
 ```bash
-git clone <your-repo-url> kirana_kart_final
+git clone <repo-url>
 cd kirana_kart_final
+cp .env.example .env
+# Fill in DB_HOST, DB_PASSWORD, OPENAI_API_KEY, JWT_SECRET_KEY, etc.
 ```
 
-### 2. Set your OpenAI key
-
+### 2. Start all services
 ```bash
-echo 'LLM_API_KEY=sk-...' >> kirana_kart/.env
+docker compose up -d
 ```
 
-### 3. Start all 8 containers
+### 3. Access
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:5173 |
+| Governance API docs | http://localhost:8001/docs |
+| Ingest API docs | http://localhost:8000/docs |
 
-```bash
-docker-compose up --build -d
-```
-
-| Container | Port | Description |
-|---|---|---|
-| `governance` | 8001 | Governance API (FastAPI) |
-| `ingest` | 8000 | Ingest API (FastAPI) |
-| `postgres` | 5432 | PostgreSQL 14 |
-| `redis` | 6379 | Redis 7 |
-| `weaviate` | 8080 | Weaviate vector DB |
-| `worker-poll` | — | Redis stream consumer |
-| `worker-celery` | — | Celery LLM pipeline worker |
-| `ui` | 5173 | React admin console |
-
-### 4. Open the console
-
-Go to **http://localhost:5173** and sign in with the bootstrap super-admin:
-
+### 4. Default admin
 ```
 Email:    admin@kirana.local
 Password: REDACTED
 ```
 
-> Change this password immediately after first login.
-
 ---
 
-## Authentication & Access Control
+## Authentication & RBAC
 
-### Sign-in methods
+- **JWT** (python-jose) + **bcrypt** passwords (passlib, pinned `<4.0.0`)
+- 60-minute access tokens + 30-day refresh tokens with rotation
+- OAuth: GitHub, Google, Microsoft
+- Per-module permissions: `{view, edit, admin}` booleans
+- `is_super_admin` flag bypasses all checks
 
-| Method | How it works |
-|---|---|
-| **Email + password** | Standard account — bcrypt-hashed password stored in DB |
-| **GitHub OAuth** | One-click — GitHub consent screen → JWT issued |
-| **Google OAuth** | One-click — Google consent screen → JWT issued |
-| **Microsoft OAuth** | One-click — Microsoft consent screen → JWT issued |
+### Modules & Roles
 
-OAuth users never have a password stored in the database (`password_hash = NULL`). They authenticate entirely through the provider's consent screen on every sign-in.
-
-New accounts (email signup or first-time OAuth login) automatically receive **viewer** access on all modules. A super-admin can promote permissions from the `/users` page.
-
-### JWT token flow
-
-```
-POST /auth/login ──► { access_token (60 min), refresh_token (30 days) }
-                              │
-                  Axios injects: Authorization: Bearer <token>
-                              │
-               On 401 ──► auto-refresh ──► retry original request
-               On refresh fail ──► logout ──► redirect /login
-```
-
-### RBAC — per-user, per-module
-
-Every user has three independent permission flags per module:
-
-| Flag | What it unlocks |
-|---|---|
-| `view` | Read-only — list, get, search, export |
-| `edit` | Create and update operations |
-| `admin` | Publish, rollback, vectorize, delete |
-
-**Modules:** `dashboard` · `tickets` · `taxonomy` · `knowledgeBase` · `policy` · `customers` · `analytics` · `system` · `biAgent` · `sandbox` · `cardinal` · `qaAgent`
-
-> **Note:** The `cardinal` module is **default-deny** — new signups receive `can_view = false`. A super-admin must explicitly grant access via the `/users` page.
-
-`is_super_admin` bypasses all permission checks entirely.
-
-Permission management lives at **http://localhost:5173/users** (requires `system.admin`).
-
-### Auth database tables
-
-| Table | Purpose |
-|---|---|
-| `kirana_kart.users` | User accounts (email/password + OAuth provider fields) |
-| `kirana_kart.user_permissions` | Per-user, per-module `can_view / can_edit / can_admin` |
-| `kirana_kart.refresh_tokens` | SHA-256 hashed refresh tokens with expiry |
-
----
-
-## OAuth Setup
-
-This is a one-time task done by whoever deploys the system. End users just click the button and see the provider's standard consent screen — no setup on their part.
-
-After updating credentials in `docker-compose.yml`, apply them with:
-```bash
-docker-compose up -d governance
-```
-
-### GitHub
-
-1. github.com → Settings → Developer settings → OAuth Apps → **New OAuth App**
-2. Set:
-   - Homepage URL: `http://localhost:5173`
-   - Authorization callback URL: `http://localhost:8001/auth/oauth/github/callback`
-3. Generate a Client Secret (shown once — copy immediately)
-4. In `docker-compose.yml`:
-   ```yaml
-   GITHUB_CLIENT_ID: "your-client-id"
-   GITHUB_CLIENT_SECRET: "your-client-secret"
-   ```
-
-### Google
-
-1. console.cloud.google.com → APIs & Services → Credentials → **Create OAuth 2.0 Client ID**
-2. Application type: **Web application**
-3. Authorized redirect URI: `http://localhost:8001/auth/oauth/google/callback`
-4. In `docker-compose.yml`:
-   ```yaml
-   GOOGLE_CLIENT_ID: "your-client-id"
-   GOOGLE_CLIENT_SECRET: "your-client-secret"
-   ```
-> While in "Testing" mode only whitelisted accounts can sign in. Go to **OAuth consent screen → Publish App** to open it to everyone.
-
-### Microsoft
-
-1. portal.azure.com → App registrations → **New registration**
-2. Supported account types: **Accounts in any org + personal Microsoft accounts**
-3. Redirect URI (Web): `http://localhost:8001/auth/oauth/microsoft/callback`
-4. Certificates & secrets → **New client secret** → copy the **Value**
-5. In `docker-compose.yml`:
-   ```yaml
-   MICROSOFT_CLIENT_ID: "your-application-client-id"
-   MICROSOFT_CLIENT_SECRET: "your-client-secret-value"
-   ```
-
----
-
-## Services
-
-### `governance` — Admin Control Plane (port 8001)
-
-FastAPI application powering the admin console. Handles auth, RBAC, tickets, taxonomy, knowledge base, policy versioning, analytics, BI agent, and system health.
-
-Entry: `kirana_kart/app/admin/main.py`
-
-### `ingest` — Ticket Ingestion (port 8000)
-
-FastAPI application accepting tickets via `POST /ingest`. Runs a 5-phase synchronous pipeline before pushing to Redis Streams for async LLM processing.
-
-Entry: `kirana_kart/main.py`
-
-### `worker-poll` — Stream Consumer
-
-Continuously polls Redis priority streams (`P1_CRITICAL` → `P4_LOW`) and dispatches Celery tasks.
-
-### `worker-celery` — LLM Pipeline Worker
-
-4-stage LLM pipeline per ticket:
-
-| Stage | Model | Purpose |
+| Module | Description | Default access |
 |---|---|---|
-| Stage 0 — Classifier | gpt-4o-mini | Issue classification + L1/L2 taxonomy mapping |
-| Stage 1 — Evaluator | gpt-4.1 | Business logic, fraud checks, refund calculation |
-| Stage 2 — Validator | o3-mini | Cross-validation, discrepancy detection, override logic |
-| Stage 3 — Responder | gpt-4o | Customer-facing response generation |
-
-### `postgres` — Database (port 5432)
-
-PostgreSQL 14 with `kirana_kart` schema containing 44 tables. Auto-initialized from `kirana_kart/exports/*.sql` on first start.
-
-### `redis` — Cache & Broker (port 6379)
-
-- `db 0` — App cache + Redis Streams (ticket queues)
-- `db 1` — Celery broker + result backend
-
-### `weaviate` — Vector DB (port 8080)
-
-Weaviate 1.29.4. Single class `KBRule` — vectorized policy rules for semantic retrieval during LLM evaluation. Embedding model: `text-embedding-3-large` (3072 dims).
-
-### `ui` — Frontend (port 5173)
-
-React 19 + TypeScript + Vite. In production, build with `npm run build` and serve `dist/`.
+| `dashboard` | Overview & stats | view |
+| `tickets` | Ticket list & pipeline status | view |
+| `crm` | HITL queue, agent dashboard, reports | edit (agents), admin (supervisors) |
+| `knowledgeBase` | KB upload, compiler, vectorize | edit |
+| `policy` | Version management, simulation, shadow | edit/admin |
+| `customers` | Customer 360° profiles | view |
+| `analytics` | FCR, spike, agent quality | view |
+| `biAgent` | BI chat agent | edit |
+| `qaAgent` | QA evaluation agent | admin |
+| `system` | System config, beat schedule | admin |
+| `sandbox` | Dev sandbox | admin |
 
 ---
 
-## Module Overview
+## The Cardinal Pipeline (4 Stages)
 
-| Module | Route | Description |
+Every ticket that enters the HITL/MANUAL_REVIEW pathway passes through all 4 stages:
+
+```
+Stage 0 — Classification         gpt-4o-mini
+  ↓  issue_type_l1, issue_type_l2, confidence
+
+Stage 1 — LLM Evaluation         gpt-4.1 + Weaviate rule candidates
+  ↓  action_code, refund amount, fraud segment, greedy classification
+
+Stage 2 — Deterministic Validation   pure Python (no LLM)
+  ↓  final_action_code, automation_pathway (AUTO_RESOLVED | HITL | MANUAL_REVIEW)
+
+Stage 3 — HITL Response Draft    pure Python (HITL cases only)
+  ↓  response_draft, hitl_queue assignment
+```
+
+Stage 2 is 100% deterministic — it reads `master_action_codes` flags (`requires_escalation`, `automation_eligible`, `requires_refund`) and applies strict routing logic regardless of LLM output.
+
+---
+
+## CRM System (Freshdesk-equivalent)
+
+A full production-grade internal CRM built on top of the pipeline HITL output.
+
+### Features
+- **Ticket queue** with filters (queue type, status, priority, SLA breach, tags, agent)
+- **Work view** — split-pane: conversation thread + notes + AI recommendation + action panel
+- **Status lifecycle**: Open → In Progress → Pending Customer → Escalated → Resolved → Closed
+- **SLA tracking** — resolution SLA + first-response SLA, breach detection, countdown timers
+- **AI Recommendation panel** — action code, refund amount, confidence, fraud segment, reasoning
+- **Approve / Reject / Modify** AI recommendation with reason capture
+- **Internal notes** + customer reply composition
+- **Canned responses** from `response_templates` table
+- **Customer 360°** — order history, refund history, CSAT, tier, churn probability
+- **Audit timeline** — immutable log of every action taken on a ticket
+- **Bulk actions** — assign, escalate, close, status change
+- **Ticket merge** with audit trail
+- **Tag management** + per-ticket tagging
+- **Ticket watchers** + in-app notifications
+- **Saved filter views** per agent
+- **Agent collision detection** (viewing lock)
+- **Agent personal dashboard** — volume, avg resolution time, CSAT, approval rate
+- **Admin supervisor dashboard** — queue health grid, SLA compliance, volume trend, aging buckets
+- **Reports** — volume by agent, SLA compliance, resolution time, action code distribution, refund analysis, first response
+
+### Queue Types & SLA Policy
+
+| Queue | Resolution SLA | First Response SLA |
 |---|---|---|
-| Dashboard | `/dashboard` | KPIs — tickets, CSAT, SLA breach rate, refund totals, daily trends |
-| Tickets | `/tickets` | Paginated list, full-text search, LLM execution trace per ticket. All processing runs exclusively through the Cardinal pipeline — dispatch buttons have been removed. |
-| Sandbox | `/sandbox` | Submit test tickets without affecting production data |
-| Taxonomy | `/taxonomy` | Issue code hierarchy — draft, version, publish, rollback, vectorize |
-| Knowledge Base | `/knowledge-base` | 5-tab module: upload & edit policy docs, guided pipeline workflow (compile → vectorize → publish), published versions with rollback, action code viewer + LLM extractor, and decision matrix (compiled rules per version) |
-| Policy | `/policy` | Rule registry, simulation A/B tests, shadow policy mode |
-| Customers | `/customers` | Profiles, order history, churn risk |
-| Analytics | `/analytics` | 5-tab dashboard: Resolution, CSAT, Refunds, SLA, Evaluation Matrix — plus **True FCR**, **Spike Reports**, and **Agent Quality** tabs |
-| BI Agent | `/bi-agent` | Natural language → SQL → streamed analyst-style response |
-| **Cardinal** | `/cardinal` | **Pipeline observability, scheduler management & registry CRUD** — 7-tab module: 5-phase ingest stats, LLM stage breakdown, per-ticket execution traces, audit log, reprocess tool, Celery Beat scheduler UI, full CRUD for **Action Registry** (`master_action_codes`), and full CRUD for **Response Templates** (`response_templates`). *Admin-only access — default-deny for new users.* |
-| **QA Agent** | `/qa-agent` | **Hybrid QA evaluation** — 12 deterministic Python checks + 10 LLM semantic parameters; results stream live via SSE; graded A–F from a blended score (35% Python + 65% LLM) |
-| System | `/system` | Service health, vector jobs, audit logs, model registry, **channel integrations** |
-| Users | `/users` | User table + per-module permission editor (system.admin only) |
+| `ESCALATION_QUEUE` | 60 min | 15 min |
+| `SLA_BREACH_REVIEW` | 120 min | 20 min |
+| `SENIOR_REVIEW` | 240 min | 30 min |
+| `MANUAL_REVIEW` | 240 min | 30 min |
+| `STANDARD_REVIEW` | 480 min | 60 min |
+
+### CRM Database Tables
+- `kirana_kart.hitl_queue` — central work queue (9 indexes, SLA timestamps, AI snapshot)
+- `kirana_kart.crm_notes` — thread entries (internal / customer reply / escalation / system)
+- `kirana_kart.crm_agent_actions` — immutable audit log (25+ action types)
+- `kirana_kart.crm_tags` + `crm_ticket_tags` — tag system
+- `kirana_kart.crm_watchers` — ticket watchers
+- `kirana_kart.crm_notifications` — in-app notification system (12 event types)
+- `kirana_kart.crm_saved_views` — per-agent filter presets
+- `kirana_kart.crm_merge_log` — merge audit
+- `kirana_kart.users.crm_availability` — agent availability (ONLINE/BUSY/AWAY/OFFLINE)
+
+---
+
+## Policy Simulation
+
+The Simulation tab in Policy Management lets you run a real ticket through the **full 4-stage Cardinal pipeline** for two policy versions side-by-side.
+
+### How It Works
+1. Select a real ticket from the `fdraw` table
+2. Choose a baseline and candidate policy version
+3. Click **Run Cardinal Simulation**
+4. Stage 0 runs once (classification is version-agnostic)
+5. Stages 1–3 run for each version with their respective Weaviate rule candidates
+6. Results show:
+   - Stage 0: issue classification + confidence
+   - Stage 1 comparison: LLM action code, fraud/greedy signals, confidence, reasoning
+   - Stage 2 comparison: final decision, automation pathway, discrepancy detection
+   - Stage 3 (if HITL): response draft + queue assignment
+   - Decision diff banner: changed action, pathway, refund amount
+
+### Endpoints
+```
+POST /simulation/run-ticket-cardinal   # full 4-stage Cardinal per version
+POST /simulation/run-ticket            # local rule-matching trace (lightweight)
+POST /simulation/run                   # batch simulation over sample_tickets table
+GET  /simulation/tickets               # ticket search for picker
+GET  /simulation/ticket/{id}           # single ticket detail
+```
 
 ---
 
 ## Policy Document Lifecycle
 
 ```
-1. Author writes business rules in Markdown / PDF / DOCX
-        ↓
-2. Upload  →  POST /kb/upload
-        ↓
-3. Compile  →  POST /compiler/compile/{version}
-   (LLM extracts structured rules into rule_registry)
-        ↓
-4. Simulate  →  POST /simulation/run
-   (compare candidate vs baseline on sample tickets)
-        ↓
-5. Shadow  →  POST /shadow/enable {"shadow_version": "v1.1.0"}
-   (run in parallel with live, capture divergence rate)
-        ↓
-6. Review  →  GET /shadow/stats
-        ↓
-7. Publish  →  POST /kb/publish {"version_label": "v1.1.0"}
-   (atomic publish + vector job queued automatically)
-        ↓
-8. Background worker vectorizes rules into Weaviate
-        ↓
-9. Live — agents query Weaviate at resolution time
+1. Author KB document (Markdown)
+2. POST /kb/upload  →  stored in knowledge_base_raw_uploads
+3. POST /compiler/extract-actions
+      LLM pass extracts Action Code Registry
+      → upserts into master_action_codes (with flags)
+4. POST /compiler/compile-latest
+      LLM reads full document, maps rules → action_codes
+      → writes rows to rule_registry
+5. POST /vectorization/vectorize
+      Embeds rules into Weaviate (policy_rule_candidates collection)
+6. POST /kb/publish  →  updates kb_runtime_config.active_version
 ```
+
+> **Important:** Always run `extract-actions` before `compile-latest`. New action codes must exist in `master_action_codes` before the compiler can reference them — otherwise Stage 2 silently defaults to `automation_eligible=True`, auto-resolving tickets that should be escalated.
 
 ---
 
-## Processing Pipeline
-
-### L1 Ingest (5 phases)
+## Module Overview
 
 ```
-POST /ingest
-  ├─ Phase 1: Validator       8 schema + constraint checks
-  ├─ Phase 2: Deduplicator    Redis cache + rate limiting
-  ├─ Phase 3: Handler         Intent matching, issue routing
-  ├─ Phase 4: Enricher        Metadata enrichment
-  └─ Phase 5: Dispatcher      Priority-weighted Redis stream push
+kirana_kart/
+├── app/
+│   ├── admin/
+│   │   ├── main.py                    # FastAPI app, route registration, startup
+│   │   ├── routes/
+│   │   │   ├── auth_routes.py         # /auth/* — login, signup, refresh, OAuth
+│   │   │   ├── user_management.py     # /users/* — CRUD + permissions
+│   │   │   ├── crm_routes.py          # /crm/* — 30 CRM endpoints
+│   │   │   └── ...
+│   │   └── services/
+│   │       ├── auth_service.py        # JWT, bcrypt, UserContext, RBAC
+│   │       ├── crm_service.py         # Full CRM business logic
+│   │       └── oauth_service.py       # GitHub/Google/Microsoft OAuth
+│   │
+│   ├── l1_ingest/                     # 5-phase ingestion pipeline
+│   ├── l2_enrichment/                 # Order context, GPS, customer risk
+│   ├── l3_analytics/                  # FCR checker, spike detection, clustering
+│   ├── l4_agents/
+│   │   ├── worker.py                  # Celery task — orchestrates 4 stages
+│   │   └── ecommerce/
+│   │       ├── stage0_classifier.py   # gpt-4o-mini classification
+│   │       ├── stage1_evaluator.py    # gpt-4.1 + Weaviate evaluation
+│   │       ├── stage2_validator.py    # Deterministic routing (no LLM)
+│   │       └── stage3_responder.py    # HITL response draft (no LLM)
+│   └── l45_ml_platform/
+│       └── simulation/
+│           ├── policy_simulation_service.py   # Cardinal + rule-trace simulation
+│           └── routes.py                      # /simulation/* endpoints
+
+kirana_kart_ui/src/
+├── pages/
+│   ├── crm/                           # CRM queue, work view, dashboards, reports
+│   ├── policy/PolicyPage.tsx          # Versions + Cardinal Simulation + Shadow
+│   ├── analytics/                     # FCR, spike, agent quality tabs
+│   └── ...
+├── api/governance/
+│   ├── crm.api.ts                     # All CRM API calls
+│   ├── simulation.api.ts              # Simulation API calls
+│   └── ...
+└── types/crm.types.ts                 # Full CRM TypeScript interfaces
 ```
-
-### Priority Queue
-
-| Stream | Priority | Use Case |
-|---|---|---|
-| `P1_CRITICAL` | Highest | VIP / high-value orders |
-| `P2_HIGH` | High | Standard refund cases |
-| `P3_MEDIUM` | Medium | Info / tracking requests |
-| `P4_LOW` | Low | Batch / bulk processing |
 
 ---
 
 ## Database Schema
 
-All tables are in the `kirana_kart` PostgreSQL schema.
+All tables live in the `kirana_kart` schema of the `orgintelligence` PostgreSQL database.
 
-### Operational
-
-| Table | ~Rows | Description |
-|---|---|---|
-| `fdraw` | 13,900 | Raw inbound tickets |
-| `customers` | 25,000 | Customer master (segment, churn risk, tier) |
-| `orders` | 100,000 | Order records |
-| `refunds` | 4,500 | Processed refunds |
-| `delivery_events` | 600,000 | Delivery tracking events |
-| `conversations` | 13,500 | Conversation sessions |
-| `csat_responses` | 4,700 | Customer satisfaction ratings |
-
-### LLM Execution
-
-| Table | Description |
+### Core Pipeline Tables
+| Table | Purpose |
 |---|---|
-| `ticket_execution_summary` | Final processed result per ticket |
-| `llm_output_1` | Stage 0 — issue classification |
-| `llm_output_2` | Stage 1 — business logic evaluation |
-| `llm_output_3` | Stage 2 — validation + final decision |
-| `execution_metrics` | Duration (ms) + token counts per stage |
-| `execution_audit_log` | Immutable processing audit trail |
+| `fdraw` | Raw tickets — subject, description, cx_email, module, canonical_payload |
+| `llm_output_1` | Stage 0 output — issue_type_l1/l2, confidence |
+| `llm_output_2` | Stage 1 output — action_code, fraud_segment, greedy_classification, refund calc |
+| `llm_output_3` | Stage 2 output — final_action_code, automation_pathway, policy_version |
+| `conversations` + `conversation_turns` | Full chat history per ticket |
 
-### Policy & Rules
-
-| Table | Description |
+### Policy Tables
+| Table | Purpose |
 |---|---|
-| `policy_versions` | Immutable policy snapshots |
-| `rule_registry` | Compiled rules (conditions, actions, constraints) |
-| `master_action_codes` | 28 action codes (REFUND_*, REJECT_*, ESCALATE_*, etc.) — fully managed via Cardinal → Action Registry tab |
-| `response_templates` | Response template library — template_ref, action_code_id, issue_l1/l2, and 5 variant text slots (template_v1..v5) — managed via Cardinal → Templates tab |
-| `policy_shadow_results` | Shadow vs active comparison results |
+| `knowledge_base_raw_uploads` | Raw KB markdown documents |
+| `kb_versions` | Compiled policy versions |
+| `kb_runtime_config` | Active policy version pointer |
+| `rule_registry` | Compiled rules per policy version |
+| `master_action_codes` | Action codes with routing flags |
+| `weaviate` (external) | Vector-embedded rule candidates |
 
-### Knowledge Base & Taxonomy
-
-| Table | Description |
+### CRM Tables
+| Table | Purpose |
 |---|---|
-| `issue_taxonomy` | Live issue taxonomy (L1 → L2) |
-| `issue_taxonomy_versions` | Immutable taxonomy snapshots |
-| `knowledge_base_versions` | Published KB snapshots |
-| `kb_vector_jobs` | Vectorization job queue |
+| `hitl_queue` | Central HITL work queue |
+| `crm_notes` | Thread entries (internal / customer reply) |
+| `crm_agent_actions` | Immutable audit log |
+| `crm_tags` / `crm_ticket_tags` | Tag system |
+| `crm_watchers` | Ticket watchers |
+| `crm_notifications` | In-app notifications |
+| `crm_saved_views` | Per-agent filter presets |
+| `crm_merge_log` | Merge audit trail |
 
-### Auth (created on first startup)
-
-| Table | Description |
+### Supporting Tables
+| Table | Purpose |
 |---|---|
-| `users` | User accounts — email, password_hash, OAuth fields, is_super_admin |
-| `user_permissions` | Per-user per-module can_view / can_edit / can_admin |
-| `refresh_tokens` | Hashed refresh tokens with expiry timestamps |
-
-### Channel Integrations (created on first startup)
-
-| Table | Description |
-|---|---|
-| `integrations` | Integration configs — Gmail, Outlook, SMTP/IMAP, API key entries with JSONB config, sync status, poller timestamps |
-
-### BI Chat (created on first startup)
-
-| Table | Description |
-|---|---|
-| `bi_chat_sessions` | BI Agent conversation sessions per user |
-| `bi_chat_messages` | Message history (user + assistant turns, with SQL query stored) |
-
-### QA Agent (created on first startup)
-
-| Table | Description |
-|---|---|
-| `qa_sessions` | Named evaluation sessions (label, user, timestamps) |
-| `qa_evaluations` | Per-ticket evaluation results — `python_qa_score NUMERIC(5,4)`, `python_findings JSONB` (12 check results), `llm_qa_score`, `overall_score`, `grade` (A–F), `llm_parameters JSONB` (10 semantic scores), SSE streaming state |
-
-### Cardinal Scheduler (created on first startup)
-
-| Table | Description |
-|---|---|
-| `cardinal_beat_schedule` | Celery Beat schedule config — one row per periodic task. Stores `task_key`, `display_name`, `schedule_type` (`interval`/`crontab`), `interval_seconds`, `cron_expression`, `enabled` flag, `last_triggered_at`, and `updated_by`. Seeded with 5 default rows on governance startup. |
+| `users` + `user_permissions` | Auth + RBAC |
+| `orders` + `customers` | Order/customer context |
+| `refunds` | Refund history |
+| `response_templates` | Canned responses by action code |
+| `agent_quality_flags` | QA coaching flags |
+| `csat_responses` | Customer satisfaction scores |
+| `cardinal_beat_schedule` | Celery Beat task registry |
 
 ---
 
 ## API Reference
 
-### Auth (`/auth`)
-
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/auth/signup` | Register — gets viewer access automatically |
-| POST | `/auth/login` | Email + password login |
-| POST | `/auth/refresh` | Rotate refresh token |
-| POST | `/auth/logout` | Invalidate refresh token |
-| GET | `/auth/me` | Current user profile + permissions |
-| GET | `/auth/oauth/github` | Redirect to GitHub consent |
-| GET | `/auth/oauth/google` | Redirect to Google consent |
-| GET | `/auth/oauth/microsoft` | Redirect to Microsoft consent |
-
-### Users (`/users`) — requires `system.admin`
-
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/users` | List all users with permissions |
-| PATCH | `/users/{id}/permissions` | Bulk update module permissions |
-| PATCH | `/users/{id}/activate` | Reactivate a deactivated user |
-| PATCH | `/users/{id}/deactivate` | Deactivate a user |
-| DELETE | `/users/{id}` | Delete a user |
-
-### Governance (key routes)
-
-| Method | Endpoint | Auth required | Description |
-|---|---|---|---|
-| GET | `/health` | None | Liveness check |
-| GET | `/system-status` | `system.view` | DB + Redis + Weaviate status |
-| GET | `/tickets` | `tickets.view` | Paginated ticket list |
-| GET | `/tickets/{id}` | `tickets.view` | Ticket detail + LLM trace |
-| GET | `/customers` | `customers.view` | Customer list |
-| GET | `/taxonomy` | `taxonomy.view` | Issue taxonomy tree |
-| POST | `/taxonomy/publish` | `taxonomy.admin` | Publish a taxonomy version |
-| POST | `/kb/upload` | `knowledgeBase.edit` | Upload a policy document |
-| POST | `/compiler/compile/{v}` | `knowledgeBase.admin` | Compile rules via LLM |
-| POST | `/kb/publish` | `knowledgeBase.admin` | Publish KB version |
-| POST | `/shadow/enable` | `policy.admin` | Enable shadow policy mode |
-| GET | `/analytics/summary` | `analytics.view` | KPI summary |
-| GET | `/analytics/evaluations` | `analytics.view` | Evaluation Matrix (paginated) |
-| POST | `/bi-agent/query` | `biAgent.view` | SSE — stream BI response |
-| GET | `/integrations` | `system.view` | List integrations (config redacted) |
-| POST | `/integrations` | `system.admin` | Create integration (Gmail / Outlook / SMTP / API) |
-| PATCH | `/integrations/{id}` | `system.admin` | Update integration name / config |
-| DELETE | `/integrations/{id}` | `system.admin` | Delete + revoke API key |
-| POST | `/integrations/{id}/toggle` | `system.admin` | Activate / deactivate |
-| POST | `/integrations/{id}/test` | `system.admin` | Test connectivity |
-| POST | `/integrations/{id}/sync` | `system.admin` | Trigger manual poll cycle |
-| POST | `/integrations/generate-key` | `system.admin` | Generate `kk_live_` API key |
-
-### QA Agent (`/qa-agent`) — requires `qaAgent.view`
-
-| Method | Endpoint | Permission | Description |
-|---|---|---|---|
-| GET | `/qa-agent/sessions` | `qaAgent.view` | List all QA sessions |
-| POST | `/qa-agent/sessions` | `qaAgent.view` | Create a new QA session |
-| DELETE | `/qa-agent/sessions/{id}` | `qaAgent.view` | Delete a session and its evaluations |
-| GET | `/qa-agent/tickets/search?limit=N` | `qaAgent.view` | List N most-recent completed tickets (no search params required) |
-| POST | `/qa-agent/evaluate` | `qaAgent.view` | **SSE stream** — run hybrid evaluation (12 Python checks → `python_check` events, then 10 LLM params → `parameter` events, then `summary` + `done`) |
-| GET | `/qa-agent/evaluations/{id}` | `qaAgent.view` | Fetch stored evaluation with all check/parameter scores |
-
-**SSE event sequence:**
+### Authentication
 ```
-python_check × 12  →  python_summary  →  parameter × 10  →  summary  →  done
+POST /auth/login          # Email + password → access + refresh tokens
+POST /auth/signup         # Create account
+POST /auth/refresh        # Rotate refresh token
+POST /auth/logout         # Invalidate refresh token
+GET  /auth/me             # Current user profile
+GET  /auth/github         # OAuth redirect
+GET  /auth/google         # OAuth redirect
+GET  /auth/microsoft      # OAuth redirect
 ```
 
-**Blended score formula:**
+### CRM
 ```
-overall_score = 0.35 × python_score + 0.65 × llm_score
-Grade: A ≥ 90% · B ≥ 75% · C ≥ 60% · D ≥ 45% · F < 45%
+GET    /crm/queue                      # Paginated queue with filters
+GET    /crm/queue/{id}                 # Full work-view detail
+POST   /crm/queue/{id}/action          # Take action (approve/reject/resolve/escalate/...)
+POST   /crm/queue/{id}/notes           # Add note
+POST   /crm/queue/{id}/assign          # Assign to agent
+POST   /crm/queue/{id}/self-assign     # Self-assign
+POST   /crm/queue/bulk-assign          # Bulk assign
+POST   /crm/queue/bulk-escalate        # Bulk escalate
+POST   /crm/queue/bulk-close           # Bulk close
+GET    /crm/dashboard/agent            # Agent personal dashboard
+GET    /crm/dashboard/admin            # Supervisor dashboard
+GET    /crm/reports                    # Analytics reports
+GET    /crm/agents                     # Agent list with availability
+GET    /crm/notifications              # In-app notifications
 ```
 
-### Cardinal Intelligence (`/cardinal`) — requires `cardinal.view` (GET) or `cardinal.admin` (POST/PATCH)
-
-> Access is **default-deny**: new accounts receive `can_view = false`. A super-admin must grant it.
-
-| Method | Endpoint | Permission | Description |
-|---|---|---|---|
-| GET | `/cardinal/overview` | `cardinal.view` | Pipeline summary stats, volume trend, source/channel distribution |
-| GET | `/cardinal/phase-stats` | `cardinal.view` | Per-LLM-stage pass/fail/latency breakdown |
-| GET | `/cardinal/executions` | `cardinal.view` | Paginated ticket execution list with filters |
-| GET | `/cardinal/executions/{ticket_id}` | `cardinal.view` | Full trace for one ticket (all LLM stages + metrics + audit events) |
-| GET | `/cardinal/audit` | `cardinal.view` | Paginated execution audit log |
-| POST | `/cardinal/reprocess/{ticket_id}` | `cardinal.admin` | Re-submit a ticket through the full Cardinal pipeline |
-| GET | `/cardinal/schedules` | `cardinal.view` | List all 5 Celery Beat schedule configs |
-| PATCH | `/cardinal/schedules/{task_key}` | `cardinal.admin` | Update `enabled`, `interval_seconds`, or `cron_expression` |
-| POST | `/cardinal/schedules/{task_key}/trigger` | `cardinal.admin` | Manually fire the task immediately via Celery `send_task` |
-| POST | `/cardinal/schedules/{task_key}/reset` | `cardinal.admin` | Restore default interval + re-enable the task |
-| GET | `/cardinal/action-registry` | `cardinal.view` | List all master action codes |
-| POST | `/cardinal/action-registry` | `cardinal.admin` | Create a new action code |
-| PUT | `/cardinal/action-registry/{id}` | `cardinal.admin` | Update an action code by id |
-| DELETE | `/cardinal/action-registry/{id}` | `cardinal.admin` | Delete an action code by id |
-| GET | `/cardinal/templates` | `cardinal.view` | List all response templates |
-| POST | `/cardinal/templates` | `cardinal.admin` | Create a new response template |
-| PUT | `/cardinal/templates/{id}` | `cardinal.admin` | Update a response template by id |
-| DELETE | `/cardinal/templates/{id}` | `cardinal.admin` | Delete a response template by id |
-
-Full interactive docs: **http://localhost:8001/docs**
-
-### Ingest API (port 8000)
-
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/ingest` | Submit a ticket |
-| GET | `/health` | Liveness check |
-
-**Sample payload:**
-```json
-{
-  "ticket_id": "12345",
-  "order_id": "ORD20260314001",
-  "customer_id": "CUST001234",
-  "org": "zomato",
-  "module": "quality",
-  "channel": "email",
-  "subject": "Missing item in my order",
-  "description": "I ordered 3 items but received 2.",
-  "source": "api"
-}
+### Policy
+```
+GET    /simulation/tickets             # Real ticket search for simulation picker
+POST   /simulation/run-ticket-cardinal # Full 4-stage Cardinal simulation
+POST   /simulation/run-ticket          # Rule-trace simulation (lightweight)
+POST   /kb/upload                      # Upload KB document
+POST   /compiler/extract-actions       # Extract action codes from KB
+POST   /compiler/compile-latest        # Compile rules to rule_registry
+POST   /vectorization/vectorize        # Embed rules into Weaviate
+POST   /kb/publish                     # Publish policy version
 ```
 
 ---
 
 ## Environment Variables
 
-Set in `docker-compose.yml` for Docker. For local dev, use `kirana_kart/.env`.
+```env
+# Database
+DB_HOST=postgres
+DB_PORT=5432
+DB_NAME=orgintelligence
+DB_USER=orguser
+DB_PASSWORD=your_password
 
-### Core
+# Redis
+REDIS_URL=redis://redis:6379/0
 
-| Variable | Default | Description |
-|---|---|---|
-| `DB_HOST` | `postgres` | PostgreSQL host |
-| `DB_NAME` | `orgintelligence` | Database name |
-| `DB_USER` | `orguser` | DB username |
-| `DB_PASSWORD` | `REDACTED` | DB password |
-| `REDIS_URL` | `redis://redis:6379/0` | Redis connection |
-| `WEAVIATE_HOST` | `weaviate` | Weaviate host |
+# Weaviate
+WEAVIATE_HOST=weaviate
+WEAVIATE_PORT=8080
 
-### Auth & JWT
+# OpenAI
+OPENAI_API_KEY=sk-...
 
-| Variable | Default | Description |
-|---|---|---|
-| `JWT_SECRET_KEY` | *(change me)* | JWT signing secret — use a long random string in production |
-| `JWT_ACCESS_EXPIRE_MINUTES` | `60` | Access token lifetime |
-| `JWT_REFRESH_EXPIRE_DAYS` | `30` | Refresh token lifetime |
-| `BOOTSTRAP_ADMIN_EMAIL` | `admin@kirana.local` | Super-admin created on first startup |
-| `BOOTSTRAP_ADMIN_PASSWORD` | `REDACTED` | Change this |
-| `BOOTSTRAP_ADMIN_NAME` | `Super Admin` | Display name |
+# JWT
+JWT_SECRET_KEY=your_secret_key_min_32_chars
+JWT_ALGORITHM=HS256
 
-### OAuth
+# OAuth (optional)
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+MICROSOFT_CLIENT_ID=
+MICROSOFT_CLIENT_SECRET=
 
-| Variable | Description |
-|---|---|
-| `OAUTH_REDIRECT_BASE_URL` | Governance API base URL for OAuth callbacks |
-| `FRONTEND_URL` | Frontend URL — OAuth success redirects here |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub OAuth app credentials |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth app credentials |
-| `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` | Microsoft app credentials |
-
-### LLM
-
-| Variable | Default | Description |
-|---|---|---|
-| `LLM_API_BASE_URL` | `https://api.openai.com/v1` | LLM provider |
-| `LLM_API_KEY` | *(set in .env)* | OpenAI API key |
-| `MODEL1` | `gpt-4o-mini` | Stage 0 — classifier |
-| `MODEL2` | `gpt-4.1` | Stage 1 — evaluator |
-| `MODEL3` | `o3-mini` | Stage 2 — validator |
-| `MODEL4` | `gpt-4o` | Stage 3 — responder |
-| `EMBEDDING_MODEL` | `text-embedding-3-large` | Embedding model |
-
-### Observability
-
-| Variable | Default | Description |
-|---|---|---|
-| `LOG_FORMAT` | `text` | `json` for production |
-| `LOG_LEVEL` | `INFO` | Log level |
-| `PROMETHEUS_ENABLED` | `false` | Expose `/metrics` |
-| `OTLP_ENDPOINT` | *(empty)* | OpenTelemetry collector gRPC address |
+# App
+FRONTEND_URL=http://localhost:5173
+```
 
 ---
 
 ## Common Commands
 
 ```bash
-# Start everything
-docker-compose up --build -d
+# Start all services
+docker compose up -d
 
-# Live logs for a service
-docker-compose logs -f governance
-docker-compose logs -f worker-celery
+# Rebuild after code changes
+docker compose up --build -d governance ui
 
-# Restart governance after config changes (e.g. OAuth credentials)
-docker-compose up -d governance
+# View governance logs
+docker logs -f kirana_kart_final-governance-1
 
-# Stop everything
-docker-compose down
+# View Celery worker logs
+docker logs -f kirana_kart_final-worker-celery-1
 
-# Stop and wipe all data volumes (fresh start)
-docker-compose down -v
+# Run a database migration / check tables
+docker exec -it kirana_kart_final-postgres-1 psql -U orguser -d orgintelligence
 
-# Rebuild a single service
-docker-compose up --build -d governance
+# Stop all
+docker compose down
+
+# Stop and wipe volumes (full reset)
+docker compose down -v
 ```
-
----
-
-## Scripts & Data Generation
-
-All scripts are in `kirana_kart/scripts/`. Run inside the governance container:
-
-```bash
-docker exec kirana_kart_final-governance-1 python3 /app/scripts/<script>.py
-```
-
-| Script | Description |
-|---|---|
-| `generate_sim_data.py` | Generate synthetic customers, orders, tickets, refunds, CSAT. Flags: `--customers 25000 --orders 100000 --seed 42 --mode reset\|append` |
-| `backfill_eval_data.py` | Populate `llm_output_1/2/3` and `execution_metrics`. Idempotent |
-| `simulate_tickets.py` | Run policy simulation against a ticket set |
-| `test_cardinal.py` | End-to-end ingestion pipeline integration test |
-| `test_endpoints.py` | Full API endpoint test suite |
-| `run_vectorization.py` | Process all pending vector jobs |
-
-### Seed a fresh database
-
-```bash
-# Generate 25k customers, 100k orders, ~13.5k tickets
-docker exec kirana_kart_final-governance-1 \
-  python3 /app/scripts/generate_sim_data.py \
-  --customers 25000 --orders 100000 --seed 42 --mode reset
-
-# Backfill LLM evaluation data
-docker exec kirana_kart_final-governance-1 \
-  python3 /app/scripts/backfill_eval_data.py
-```
-
-**Generated data profile:**
-
-| Table | Rows |
-|---|---|
-| customers | 25,000 |
-| orders | 100,000 |
-| delivery_events | ~600,000 |
-| fdraw (tickets) | ~13,500 |
-| refunds | ~4,500 |
-| csat_responses | ~4,700 |
 
 ---
 
 ## Development Notes
 
-### Run backends locally (no Docker)
-
-```bash
-# Governance
-cd kirana_kart
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.admin.main:app --port 8001 --reload
-
-# Ingest
-uvicorn main:app --port 8000 --reload
-
-# Celery worker
-celery -A app.l4_agents.worker worker --loglevel=info
-```
-
-### Run frontend locally
-
-```bash
-cd kirana_kart_ui
-npm install
-npm run dev       # http://localhost:5173
-npm run build     # production build → dist/
-```
-
-### Project structure
-
-```
-kirana_kart_final/
-├── docker-compose.yml
-├── kirana_kart/                        # Backend
-│   ├── requirements.txt
-│   ├── .env
-│   ├── app/
-│   │   ├── config.py                   # All settings (pydantic-settings)
-│   │   ├── admin/
-│   │   │   ├── main.py                 # FastAPI app + startup hooks
-│   │   │   ├── db.py                   # SQLAlchemy engine + session
-│   │   │   ├── routes/
-│   │   │   │   ├── auth_routes.py      # /auth/* — login, signup, OAuth
-│   │   │   │   ├── user_management.py  # /users/* — CRUD + permissions
-│   │   │   │   ├── taxonomy.py
-│   │   │   │   ├── tickets.py
-│   │   │   │   ├── customers.py
-│   │   │   │   ├── analytics.py
-│   │   │   │   ├── system.py
-│   │   │   │   ├── bi_agent.py
-│   │   │   │   ├── integrations.py     # /integrations/* — channel integrations
-│   │   │   │   ├── cardinal.py         # /cardinal/* — pipeline observability, reprocess, beat scheduler, action registry, and templates CRUD
-│   │   │   │   └── qa_agent.py         # /qa-agent/* — QA sessions, ticket search, SSE evaluate
-│   │   │   └── services/
-│   │   │       ├── auth_service.py     # JWT, bcrypt, RBAC dependencies
-│   │   │       ├── oauth_service.py    # GitHub / Google / Microsoft
-│   │   │       ├── integration_service.py  # DB setup, Gmail/Outlook/IMAP polling, poller daemon
-│   │   │       ├── qa_agent_service.py # QA session/evaluation DB operations, table setup
-│   │   │       └── qa_python_evaluators.py # 12 deterministic Python check functions
-│   │   ├── l1_ingestion/               # KB upload + registry
-│   │   ├── l2_cardinal/                # 5-phase ingest pipeline
-│   │   ├── l4_agents/                  # Celery worker + tasks
-│   │   └── l45_ml_platform/            # Compiler, vectorization, simulation
-│   └── exports/
-│       └── *.sql                       # DB seed (auto-loaded by postgres)
-│
-└── kirana_kart_ui/                     # Frontend
-    ├── src/
-    │   ├── stores/
-    │   │   └── auth.store.ts           # Zustand: user, tokens
-    │   ├── api/
-    │   │   ├── clients.ts              # Axios instances
-    │   │   ├── interceptors.ts         # Bearer + 401→refresh→retry
-    │   │   └── governance/
-    │   │       ├── auth.api.ts
-    │   │       ├── users.api.ts
-    │   │       ├── integrations.api.ts # Channel integrations API client
-    │   │       ├── cardinal.api.ts     # Cardinal: observability + schedule + action registry + templates CRUD
-    │   │       ├── kb.api.ts           # KB: upload, versions, publish, rollback, rule registry
-    │   │       ├── compiler.api.ts     # Compiler: compile, action-code list, extract-actions
-    │   │       └── qa.api.ts           # QA Agent sessions, ticket search, SSE evaluate
-    │   ├── types/
-    │   │   ├── integration.types.ts    # Integration, IntegrationType, SyncStatus
-    │   │   ├── cardinal.types.ts       # CardinalOverview, PhaseStats, ExecutionDetail, BeatSchedule, ActionCodeEntry, ActionCodePayload, ResponseTemplate, TemplatePayload
-    │   │   ├── kb.types.ts             # KBUpload, KBVersion, ActionCode, RuleEntry, ExtractActionsResult
-    │   │   └── qa.types.ts             # QASession, QAEvaluation, QATicketResult, SSE event types
-    │   ├── lib/
-    │   │   └── access.ts               # hasPermission(user, module, perm)
-    │   ├── pages/
-    │   │   ├── auth/
-    │   │   │   ├── LoginPage.tsx
-    │   │   │   ├── SignupPage.tsx
-    │   │   │   └── OAuthCallbackPage.tsx
-    │   │   ├── system/
-    │   │   │   ├── SystemPage.tsx      # 5-tab system admin
-    │   │   │   └── IntegrationsPanel.tsx  # Channel integrations UI
-    │   │   ├── knowledge-base/
-    │   │   │   ├── KBPage.tsx          # 5-tab Knowledge Base page
-    │   │   │   └── tabs/
-    │   │   │       ├── DocumentsTab.tsx    # Upload + edit draft documents
-    │   │   │       ├── PipelineTab.tsx     # Guided 5-step compile → vectorize → publish workflow
-    │   │   │       ├── VersionsTab.tsx     # Published versions + rollback
-    │   │   │       ├── ActionCodesTab.tsx  # Action code viewer + LLM extractor
-    │   │   │       └── RulesTab.tsx        # Decision matrix — compiled rules per version
-    │   │   ├── cardinal/
-    │   │   │   ├── CardinalPage.tsx    # 7-tab Cardinal Intelligence page
-    │   │   │   └── tabs/
-    │   │   │       ├── OverviewTab.tsx       # Pipeline stats + volume trend + distribution charts
-    │   │   │       ├── PhaseAnalysisTab.tsx  # Per-LLM-stage pass/fail cards + error rate chart
-    │   │   │       ├── ExecutionTab.tsx      # Paginated execution table + slide-over trace drawer
-    │   │   │       ├── OperationsTab.tsx     # Audit log + reprocess ticket tool
-    │   │   │       ├── SchedulersTab.tsx     # Beat schedule table — toggle, inline edit, Run Now
-    │   │   │       ├── ActionRegistryTab.tsx # Full CRUD for master_action_codes (admin-only write)
-    │   │   │       └── TemplatesTab.tsx      # Full CRUD for response_templates with expandable variant rows
-    │   │   ├── agents/
-    │   │   │   └── QAAgentPage.tsx     # QA Agent — session sidebar, TicketListPanel, SSE evaluation viewer
-    │   │   └── users/
-    │   │       └── UserManagementPage.tsx
-    │   ├── components/layout/
-    │   │   ├── AuthGuard.tsx
-    │   │   ├── AccessGuard.tsx
-    │   │   ├── AppShell.tsx
-    │   │   └── Sidebar.tsx
-    │   └── router/index.tsx
-    └── vite.config.ts
-```
+- **Rule matching fix (v4+):** `_fetch_rules` no longer filters by `module` — ticket module labels ("delivery") don't match `rule_registry.module_name` values ("Fraud & Abuse Intelligence"). All rules for the active policy version are fetched; the LLM + Weaviate determine applicability.
+- **Stage 2 is deterministic:** `stage2_validator.py` makes zero LLM calls. It reads `master_action_codes.requires_escalation`, `automation_eligible`, `requires_refund` to route tickets. New action codes MUST be extracted via `/compiler/extract-actions` before compiling, or Stage 2 silently auto-resolves escalation-required tickets.
+- **CRM enqueue is non-fatal:** The worker wraps CRM enqueue in try/except — a CRM failure never blocks pipeline completion.
+- **Cardinal Simulation writes nothing to DB:** `simulate_ticket_cardinal()` calls stage `.run()` functions directly, bypassing the `_run_stage_*` DB-write wrappers in `worker.py`.
+- **bcrypt pinned:** `bcrypt<4.0.0` required for passlib 1.7.x compatibility.
+- **JWT key:** `kk_auth` localStorage key (not the old `kk_admin_token`).
 
 ---
 
 ## Troubleshooting
 
-**"Login failed" on the login page**
-The governance container isn't reachable or took too long to start. Run `docker-compose logs governance` to check.
-
-**Bootstrap admin not created (governance logs show error)**
-Usually a `bcrypt` version mismatch. Confirm `requirements.txt` has `bcrypt>=3.2.0,<4.0.0` (already set by default).
-
-**OAuth button returns "invalid_client"**
-The `CLIENT_ID` / `CLIENT_SECRET` in `docker-compose.yml` are wrong or still set to the placeholder. Double-check and restart governance.
-
-**"Permission denied" after logging in**
-Your account has no permissions on that module. Ask a super-admin to grant access via the `/users` page.
-
-**`relation kirana_kart.xxx does not exist`**
-The DB seed SQL was not loaded. This happens when the `pgdata` volume already exists from a previous run. Run `docker-compose down -v` to reset volumes, then `docker-compose up -d`.
-
-**Weaviate returns connection errors**
-Weaviate needs ~10 seconds to be ready after the container starts. The governance service retries automatically — wait a moment and check logs again.
-
-**Embedding count mismatch (vectorization fails)**
-OpenAI rate-limit issue. Reduce `PROCESS_BATCH_SIZE` in your `.env`.
+| Symptom | Cause | Fix |
+|---|---|---|
+| Simulation returns "No rules found" | Policy version has no compiled rules | Upload KB → extract-actions → compile → vectorize |
+| Stage 2 auto-resolves escalation cases | Action code missing from `master_action_codes` | Run `/compiler/extract-actions` before compile |
+| CRM queue empty | Worker not running or pipeline not completing | Check `docker logs worker-celery-1` |
+| Weaviate returns empty rule candidates | Rules not vectorized for that policy version | Run `/vectorization/vectorize` |
+| Auth token expired | Access token TTL is 60 minutes | Frontend auto-refreshes via interceptor |
 
 ---
 
 ## Production Checklist
 
-- [ ] Set a strong random `JWT_SECRET_KEY` (32+ characters)
-- [ ] Change `BOOTSTRAP_ADMIN_PASSWORD` immediately after first login
-- [ ] Set `LOG_FORMAT: json` for structured logging
-- [ ] Configure `OTLP_ENDPOINT` for OpenTelemetry traces
-- [ ] Set `PROMETHEUS_ENABLED: "true"` and scrape `/metrics`
-- [ ] Use managed PostgreSQL and Redis instead of Docker containers
-- [ ] Set `OAUTH_REDIRECT_BASE_URL` and `FRONTEND_URL` to your production domain
-- [ ] Register OAuth apps with production callback URLs
-- [ ] Restrict CORS in `app/admin/main.py` to your production frontend domain
-- [ ] Rotate the OpenAI API key and set via secret manager, not plain env
-- [ ] For Gmail integrations: create a Google Cloud project, enable the Gmail API, and generate OAuth2 credentials with the `https://mail.google.com/` scope
-- [ ] For Outlook integrations: register an Azure AD app with `Mail.Read` delegated permissions and grant admin consent
-- [ ] Rotate any generated `kk_live_` API keys if they are ever exposed; deletion via the Integrations UI immediately revokes ingest access
-- [ ] Consider encrypting sensitive JSONB config fields (`access_token`, `refresh_token`, `password`) at the DB level for production deployments
-- [ ] Grant `cardinal.view` (and optionally `cardinal.admin` for reprocess + scheduler management + action registry/templates write access) only to trusted operations team members — the module is default-deny for all new accounts by design
+- [ ] Change `admin@kirana.local` bootstrap password
+- [ ] Set strong `JWT_SECRET_KEY` (32+ random bytes)
+- [ ] Set strong `DB_PASSWORD`
+- [ ] Configure OAuth client IDs/secrets
+- [ ] Set `FRONTEND_URL` to production domain
+- [ ] Enable HTTPS (reverse proxy / load balancer)
+- [ ] Set up PostgreSQL backups
+- [ ] Configure Celery Beat for `crm-auto-escalate-15m` task
+- [ ] Monitor Weaviate memory (default 1Gi limit in compose)
+- [ ] Rotate JWT secret on suspected compromise
+
+---
+
+*All company names, persons, financial figures, and business metrics in this project are entirely fictional and for demonstration purposes only.*

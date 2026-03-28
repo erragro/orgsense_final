@@ -61,7 +61,8 @@ export function PipelineTab({ canAdmin }: Props) {
     refetchInterval: vectorStatus === 'running' ? 3000 : false,
   })
 
-  const draftDocs = uploads?.filter((u) => u.registry_status === 'draft') ?? []
+  // Include draft AND compiled docs so users can continue vectorize/publish after compile
+  const draftDocs = uploads?.filter((u) => u.registry_status === 'draft' || u.registry_status === 'compiled') ?? []
 
   const handleExtract = async () => {
     if (!versionLabel) { toast.error('Enter a version label first'); return }
@@ -97,6 +98,7 @@ export function PipelineTab({ canAdmin }: Props) {
     setVectorStatus('running')
     try {
       await vectorizationApi.vectorizeVersion(versionLabel)
+      setVectorStatus('done')
       toast.success('Vectorization queued', versionLabel)
       void qc.invalidateQueries({ queryKey: ['vector', 'status', versionLabel] })
     } catch {
@@ -120,8 +122,10 @@ export function PipelineTab({ canAdmin }: Props) {
     }
   }
 
+  // Backend returns { vector_status: 'completed' }, not { status: 'completed' }
   const vecDone =
-    vectorStatusData?.status === 'completed' ||
+    vectorStatus === 'done' ||
+    (vectorStatusData as any)?.vector_status === 'completed' ||
     compilerStatusData?.is_active
 
   const steps = [
@@ -222,10 +226,10 @@ export function PipelineTab({ canAdmin }: Props) {
           {vectorStatusData && (
             <span className={cn(
               'text-xs',
-              vectorStatusData.status === 'completed' ? 'text-green-400' :
-              vectorStatusData.status === 'failed' ? 'text-red-400' : 'text-amber-400'
+              (vectorStatusData as any).vector_status === 'completed' ? 'text-green-400' :
+              (vectorStatusData as any).vector_status === 'failed' ? 'text-red-400' : 'text-amber-400'
             )}>
-              {vectorStatusData.status}
+              {(vectorStatusData as any).vector_status ?? vectorStatusData.status}
             </span>
           )}
         </div>

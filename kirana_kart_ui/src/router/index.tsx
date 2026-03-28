@@ -49,6 +49,13 @@ const SandboxPage = lazy(() => import('@/pages/sandbox/SandboxPage'))
 const UserManagementPage = lazy(() => import('@/pages/users/UserManagementPage'))
 const CardinalPage = lazy(() => import('@/pages/cardinal/CardinalPage'))
 
+// CRM pages
+const CRMQueuePage          = lazy(() => import('@/pages/crm/CRMQueuePage'))
+const CRMWorkViewPage       = lazy(() => import('@/pages/crm/CRMWorkViewPage'))
+const CRMAgentDashboardPage = lazy(() => import('@/pages/crm/CRMAgentDashboardPage'))
+const CRMAdminDashboardPage = lazy(() => import('@/pages/crm/CRMAdminDashboardPage'))
+const CRMReportsPage        = lazy(() => import('@/pages/crm/CRMReportsPage'))
+
 export const router = createBrowserRouter([
   {
     path: '/login',
@@ -92,6 +99,11 @@ export const router = createBrowserRouter([
       { path: 'cardinal', element: protect(CardinalPage, 'cardinal') },
       { path: 'cardinal/*', element: protect(CardinalPage, 'cardinal') },
       { path: 'users', element: protect(UserManagementPage, 'system', 'admin') },
+      { path: 'crm',                   element: protect(CRMQueuePage,          'crm') },
+      { path: 'crm/ticket/:queueId',   element: protect(CRMWorkViewPage,       'crm') },
+      { path: 'crm/dashboard',         element: protect(CRMAgentDashboardPage, 'crm') },
+      { path: 'crm/admin',             element: protect(CRMAdminDashboardPage, 'crm', 'admin') },
+      { path: 'crm/reports',           element: protect(CRMReportsPage,        'crm', 'admin') },
     ],
   },
 ])

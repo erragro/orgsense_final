@@ -1088,6 +1088,24 @@ def _recompute_risk_profile(
 
 
 # ============================================================
+# CRM AUTO-ESCALATE TASK
+# ============================================================
+
+
+@celery_app.task(name="app.l4_agents.tasks.beat_crm_auto_escalate")
+def beat_crm_auto_escalate():
+    """Every 15 minutes: auto-escalate CRM tickets that have breached SLA."""
+    try:
+        from app.admin.services.crm_service import auto_escalate_overdue
+        count = auto_escalate_overdue()
+        logger.info("[CRM] Auto-escalated %d overdue tickets", count)
+        return {"escalated": count}
+    except Exception as exc:
+        logger.error("[CRM] auto_escalate_overdue failed: %s", exc)
+        return {"error": str(exc)}
+
+
+# ============================================================
 # CELERY BEAT SCHEDULE
 # ============================================================
 
@@ -1141,5 +1159,10 @@ celery_app.conf.beat_schedule = {
     "score-conversations-every-5m": {
         "task":     "app.l4_agents.tasks.beat_score_conversations",
         "schedule": 300.0,  # 5 minutes
+    },
+
+    "crm-auto-escalate-overdue-15m": {
+        "task":     "app.l4_agents.tasks.beat_crm_auto_escalate",
+        "schedule": 900.0,  # 15 minutes
     },
 }

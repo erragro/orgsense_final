@@ -5,7 +5,9 @@ import { useAuthStore } from '@/stores/auth.store'
 import {
   LayoutDashboard, Ticket, TreeDeciduous,
   BookOpen, Shield, Users, BarChart3, Settings,
-  ChevronLeft, ChevronRight, LogOut, BrainCircuit, FlaskConical, UserCog, Cpu, ShieldCheck, type LucideIcon,
+  ChevronLeft, ChevronRight, LogOut, BrainCircuit, FlaskConical, UserCog, Cpu, ShieldCheck,
+  Headphones, ListChecks, BarChart2, FileBarChart2,
+  type LucideIcon,
 } from 'lucide-react'
 import { hasPermission, type AppModule, type Permission } from '@/lib/access'
 import type { User } from '@/stores/auth.store'
@@ -54,6 +56,15 @@ const NAV_GROUPS: NavGroup[] = [
       { label: 'Cardinal',  icon: Cpu,          path: '/cardinal',  module: 'cardinal' },
       { label: 'BI Agent',  icon: BrainCircuit, path: '/bi-agent',  module: 'biAgent' },
       { label: 'QA Agent',  icon: ShieldCheck,  path: '/qa-agent',  module: 'qaAgent' },
+    ],
+  },
+  {
+    label: 'CRM',
+    items: [
+      { label: 'Queue',          icon: Headphones,    path: '/crm',           module: 'crm' as AppModule },
+      { label: 'My Dashboard',   icon: ListChecks,    path: '/crm/dashboard', module: 'crm' as AppModule },
+      { label: 'Team Dashboard', icon: BarChart2,     path: '/crm/admin',     module: 'crm' as AppModule, permission: 'admin' as Permission },
+      { label: 'Reports',        icon: FileBarChart2, path: '/crm/reports',   module: 'crm' as AppModule, permission: 'admin' as Permission },
     ],
   },
   {

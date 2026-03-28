@@ -13,6 +13,7 @@ export type AppModule =
   | 'sandbox'
   | 'cardinal'
   | 'qaAgent'
+  | 'crm'
 
 export type Permission = 'view' | 'edit' | 'admin'
 

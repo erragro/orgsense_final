@@ -2,6 +2,9 @@ import { useLocation } from 'react-router-dom'
 import { Sun, Moon } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useUIStore } from '@/stores/ui.store'
+import { useAuthStore } from '@/stores/auth.store'
+import { hasPermission } from '@/lib/access'
+import { NotificationBell } from '@/pages/crm/components/NotificationBell'
 
 const BREADCRUMB_MAP: Record<string, string> = {
   '/dashboard': 'Dashboard',
@@ -28,6 +31,8 @@ const healthDotColors = {
 export function TopBar({ systemHealthStatus }: TopBarProps) {
   const { pathname } = useLocation()
   const { theme, toggleTheme } = useUIStore()
+  const { user } = useAuthStore()
+  const hasCRM = hasPermission(user, 'crm', 'view')
 
   // Derive breadcrumb
   const segments = pathname.split('/').filter(Boolean)
@@ -49,6 +54,7 @@ export function TopBar({ systemHealthStatus }: TopBarProps) {
       </nav>
 
       <div className="flex items-center gap-3">
+        {hasCRM && <NotificationBell />}
         {systemHealthStatus && (
           <div className="flex items-center gap-1.5">
             <span className={cn('w-2 h-2 rounded-full', healthDotColors[systemHealthStatus])} />
