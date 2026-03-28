@@ -287,6 +287,9 @@ def ensure_auth_tables() -> None:
             oauth_id VARCHAR(255),
             avatar_url TEXT,
             is_super_admin BOOLEAN NOT NULL DEFAULT FALSE,
+            -- DPDP Act §9: children's data requires guardian consent
+            date_of_birth DATE,
+            guardian_consent_given BOOLEAN DEFAULT NULL,
             created_at TIMESTAMPTZ DEFAULT NOW(),
             updated_at TIMESTAMPTZ DEFAULT NOW(),
             UNIQUE(oauth_provider, oauth_id)

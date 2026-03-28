@@ -237,6 +237,23 @@ class Settings(BaseSettings):
     log_format: str = Field(default="json", alias="LOG_FORMAT")
 
     # ============================================================
+    # PII ENCRYPTION (field-level AES for customer PII at rest)
+    # ============================================================
+
+    # 32-byte hex key for AES-256 field encryption.
+    # Generate: python -c "import secrets; print(secrets.token_hex(32))"
+    # REQUIRED in production — app will refuse to start without it.
+    pii_encryption_key: str = Field(default="", alias="PII_ENCRYPTION_KEY")
+
+    # ============================================================
+    # DATA GOVERNANCE
+    # ============================================================
+
+    # ISO 3166-1 alpha-2 region code where data is physically stored.
+    # DPDP Act requires Indian data to be stored in India ("IN").
+    data_region: str = Field(default="IN", alias="DATA_REGION")
+
+    # ============================================================
     # VALIDATION
     # ============================================================
 
@@ -250,6 +267,31 @@ class Settings(BaseSettings):
                 RuntimeWarning,
                 stacklevel=2,
             )
+        return self
+
+    @model_validator(mode="after")
+    def enforce_production_secrets(self) -> "Settings":
+        """
+        Refuse to start in production if insecure defaults are still set.
+        Prevents accidental deployment with placeholder credentials.
+        """
+        _DEFAULT_JWT = "REDACTED"
+
+        if self.deployment_env == "production":
+            if self.jwt_secret_key == _DEFAULT_JWT or len(self.jwt_secret_key) < 32:
+                raise ValueError(
+                    "JWT_SECRET_KEY must be a strong random secret in production. "
+                    "Generate one with: python -c \"import secrets; print(secrets.token_hex(64))\""
+                )
+            if not self.pii_encryption_key or len(self.pii_encryption_key) < 32:
+                raise ValueError(
+                    "PII_ENCRYPTION_KEY must be set in production (min 32 hex chars). "
+                    "Generate with: python -c \"import secrets; print(secrets.token_hex(32))\""
+                )
+            if self.bootstrap_admin_password == "REDACTED":
+                raise ValueError(
+                    "BOOTSTRAP_ADMIN_PASSWORD must be changed from the default in production."
+                )
         return self
 
 

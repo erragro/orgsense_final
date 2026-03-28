@@ -1,3 +1,14 @@
+/**
+ * OAuthCallbackPage.tsx
+ *
+ * Security: OAuth tokens are no longer passed via URL query parameters
+ * (prevents token exposure in browser history, referer headers, server logs).
+ *
+ * Instead, the backend sets HttpOnly cookies on the redirect and this page
+ * simply calls /auth/me to fetch the user profile using the cookie.
+ * If the cookie was not set (OAuth failed), the ?error param will be present.
+ */
+
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth.store'
@@ -11,30 +22,24 @@ export default function OAuthCallbackPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    const accessToken = params.get('access_token')
-    const refreshToken = params.get('refresh_token')
+    const oauthError = params.get('error')
 
-    if (!accessToken || !refreshToken) {
-      setError('OAuth login failed. Missing tokens in callback.')
+    if (oauthError) {
+      setError(`OAuth login failed: ${oauthError}`)
       return
     }
 
-    // Temporarily store the access token so the /auth/me request is authenticated
-    // We do this by calling setAuth with a placeholder user and then fetching the real user
+    // Tokens are in HttpOnly cookies — just fetch the user profile
     ;(async () => {
       try {
-        // Store tokens first so the interceptor can inject the Authorization header
-        useAuthStore.setState({
-          accessToken,
-          refreshToken,
-          user: null,
-        })
-
         const res = await authApi.me()
-        setAuth(accessToken, refreshToken, res.data)
+        // setAuth with empty token strings — cookie is the authoritative source
+        setAuth('', '', res.data)
+        // Clean up URL to remove any query params
+        window.history.replaceState({}, '', '/auth/callback')
         navigate('/dashboard', { replace: true })
       } catch {
-        setError('Failed to fetch user profile. Please try logging in again.')
+        setError('OAuth login failed. Please try logging in again.')
       }
     })()
   }, [navigate, setAuth])

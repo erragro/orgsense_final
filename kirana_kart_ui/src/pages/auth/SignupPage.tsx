@@ -13,6 +13,7 @@ export default function SignupPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [consentGiven, setConsentGiven] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -24,18 +25,22 @@ export default function SignupPage() {
       setError('All fields are required')
       return
     }
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters')
+    if (password.length < 12) {
+      setError('Password must be at least 12 characters')
       return
     }
     if (password !== confirmPassword) {
       setError('Passwords do not match')
       return
     }
+    if (!consentGiven) {
+      setError('You must consent to data processing to create an account (DPDP Act §6)')
+      return
+    }
 
     setLoading(true)
     try {
-      const res = await authApi.signup(email.trim(), password, fullName.trim())
+      const res = await authApi.signup(email.trim(), password, fullName.trim(), consentGiven)
       const { access_token, refresh_token, user } = res.data
       setAuth(access_token, refresh_token, user)
       navigate('/dashboard', { replace: true })
@@ -107,11 +112,30 @@ export default function SignupPage() {
               autoComplete="new-password"
             />
 
+            {/* DPDP Act §6 — Explicit consent checkbox */}
+            <div className="flex items-start gap-3 mt-2">
+              <input
+                type="checkbox"
+                id="consent"
+                checked={consentGiven}
+                onChange={(e) => setConsentGiven(e.target.checked)}
+                className="mt-1 h-4 w-4 rounded border-surface-border accent-brand-600 cursor-pointer"
+              />
+              <label htmlFor="consent" className="text-xs text-muted leading-relaxed cursor-pointer">
+                I consent to Kirana Kart processing my personal data for account management and
+                service delivery as described in the{' '}
+                <Link to="/privacy" className="text-brand-400 hover:text-brand-300 underline" target="_blank">
+                  Privacy Policy
+                </Link>{' '}
+                (required under DPDP Act §6)
+              </label>
+            </div>
+
             <Button
               type="submit"
               className="w-full mt-2"
               loading={loading}
-              disabled={!fullName.trim() || !email.trim() || !password || !confirmPassword}
+              disabled={!fullName.trim() || !email.trim() || !password || !confirmPassword || !consentGiven}
             >
               Create Account
             </Button>

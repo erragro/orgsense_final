@@ -7,8 +7,13 @@ import threading
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy import text
 
 from app.config import settings
@@ -30,6 +35,7 @@ from app.admin.routes.qa_agent import ensure_qa_tables
 from app.admin.routes.cardinal import ensure_schedule_table, ensure_master_action_codes_constraints
 from app.admin.services.integration_service import ensure_integration_tables, run_integration_poller
 from app.admin.services.crm_service import ensure_crm_tables
+from app.middleware.pii_audit_middleware import ensure_pii_audit_table
 
 import logging
 
@@ -118,6 +124,7 @@ async def lifespan(app: FastAPI):
     from app.admin.services.crm_automation_engine import seed_cardinal_rules
     seed_cardinal_rules()
     ensure_integration_tables()
+    ensure_pii_audit_table()  # DPDP: creates pii_access_log, consent_records, retention_policies, grievances
     threading.Thread(
         target=run_integration_poller,
         daemon=True,
@@ -142,6 +149,32 @@ async def lifespan(app: FastAPI):
 configure_logging()
 
 # ============================================================
+# RATE LIMITER
+# ============================================================
+
+limiter = Limiter(key_func=get_remote_address, storage_uri=settings.redis_url)
+
+
+# ============================================================
+# SECURITY HEADERS MIDDLEWARE
+# ============================================================
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Inject OWASP-recommended security headers on every response."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        # HSTS: only effective over HTTPS — safe to set always (browsers ignore over HTTP)
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+        return response
+
+
+# ============================================================
 # APP
 # ============================================================
 
@@ -153,7 +186,37 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS for UI — allow credentials (needed for Authorization header)
+# Rate limiter state + error handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# ============================================================
+# GLOBAL ERROR HANDLER — prevent internal details leaking to clients
+# ============================================================
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """
+    Catch-all handler: log the full exception server-side,
+    return a generic 500 message to the client — never expose
+    stack traces, SQL errors, or internal paths externally.
+    """
+    logger.exception(
+        "Unhandled exception | method=%s path=%s",
+        request.method,
+        request.url.path,
+        exc_info=exc,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An internal server error occurred. Please contact support."},
+    )
+
+# Security headers on every response
+app.add_middleware(SecurityHeadersMiddleware)
+
+# CORS for UI — allow credentials (needed for Authorization header + cookies)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url],
@@ -161,6 +224,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Correlation-ID"],
 )
 
 # Correlation ID injection + structured request logging
@@ -195,6 +259,8 @@ from app.admin.routes.qa_agent import router as qa_agent_router
 from app.admin.routes.integrations import router as integrations_router
 from app.admin.routes.cardinal import router as cardinal_router
 from app.admin.routes.crm_routes import router as crm_router
+from app.admin.routes.consent_routes import router as consent_router
+from app.admin.routes.data_rights_routes import router as data_rights_router
 
 app.include_router(auth_router)
 app.include_router(session_router)
@@ -214,6 +280,8 @@ app.include_router(qa_agent_router)
 app.include_router(integrations_router)
 app.include_router(cardinal_router)
 app.include_router(crm_router)
+app.include_router(consent_router)
+app.include_router(data_rights_router)
 
 
 # ============================================================

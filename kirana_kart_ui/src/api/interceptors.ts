@@ -1,70 +1,75 @@
+/**
+ * interceptors.ts
+ *
+ * Axios interceptors for governance and ingest API clients.
+ *
+ * Security: tokens are stored in HttpOnly cookies — the browser sends
+ * them automatically on every request when `withCredentials: true` is set
+ * on the Axios instance. We no longer read tokens from localStorage.
+ *
+ * Token refresh: on 401 the interceptor calls /auth/refresh, which:
+ *   - reads the refresh token from the HttpOnly kk_refresh cookie
+ *   - sets a new access token cookie (kk_access)
+ *   - returns a new access_token in the JSON body (for Bearer header use)
+ *
+ * The Authorization: Bearer header is still sent for services that
+ * cannot read HttpOnly cookies (e.g. WebSocket, external APIs).
+ * It is populated from the in-memory access token returned by /auth/refresh.
+ */
+
 import { ingestClient, governanceClient } from './clients'
 import { useAuthStore } from '@/stores/auth.store'
 
 let isRefreshing = false
 let refreshSubscribers: Array<(token: string) => void> = []
 
+// In-memory access token (NOT in localStorage — only in memory for this session)
+let _inMemoryAccessToken: string | null = null
+
 function onRefreshed(token: string) {
   refreshSubscribers.forEach((cb) => cb(token))
   refreshSubscribers = []
 }
 
-function getAccessToken(): string | null {
-  try {
-    const raw = localStorage.getItem('kk_auth')
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as { state?: { accessToken?: string } }
-    return parsed?.state?.accessToken ?? null
-  } catch {
-    return null
-  }
-}
-
-function getRefreshToken(): string | null {
-  try {
-    const raw = localStorage.getItem('kk_auth')
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as { state?: { refreshToken?: string } }
-    return parsed?.state?.refreshToken ?? null
-  } catch {
-    return null
-  }
-}
-
 function handleUnauthorized() {
+  _inMemoryAccessToken = null
   useAuthStore.getState().logout()
   window.location.href = '/login'
 }
 
 async function tryRefresh(): Promise<string | null> {
-  const refreshToken = getRefreshToken()
-  if (!refreshToken) return null
-
   try {
+    // The HttpOnly refresh cookie is sent automatically via withCredentials
     const res = await governanceClient.post<{ access_token: string; refresh_token: string }>(
       '/auth/refresh',
-      { refresh_token: refreshToken },
+      {},
     )
-    const { access_token, refresh_token } = res.data
-    useAuthStore.getState().setAccessToken(access_token)
-    // Update refresh token in store too
-    const store = useAuthStore.getState()
-    store.setAuth(access_token, refresh_token, store.user!)
+    const { access_token } = res.data
+    _inMemoryAccessToken = access_token
     return access_token
   } catch {
     return null
   }
 }
 
-// Governance client: inject Authorization Bearer
+// ─── Governance client interceptors ───────────────────────────────────────
+
 governanceClient.interceptors.request.use((config) => {
-  const token = getAccessToken()
-  if (token) config.headers['Authorization'] = `Bearer ${token}`
+  // Send Bearer token from memory if available (supplements HttpOnly cookie)
+  if (_inMemoryAccessToken) {
+    config.headers['Authorization'] = `Bearer ${_inMemoryAccessToken}`
+  }
   return config
 })
 
 governanceClient.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    // Capture access token from login/refresh responses into memory
+    if (res.data?.access_token) {
+      _inMemoryAccessToken = res.data.access_token
+    }
+    return res
+  },
   async (error) => {
     const originalRequest = error.config
     if (error.response?.status === 401 && !originalRequest._retry) {
@@ -77,13 +82,11 @@ governanceClient.interceptors.response.use(
       originalRequest._retry = true
 
       if (isRefreshing) {
-        // Queue this request until refresh completes
         return new Promise((resolve, reject) => {
           refreshSubscribers.push((token) => {
             originalRequest.headers['Authorization'] = `Bearer ${token}`
             resolve(governanceClient(originalRequest))
           })
-          // Add rejection handler on timeout
           setTimeout(() => reject(error), 10_000)
         })
       }
@@ -107,10 +110,12 @@ governanceClient.interceptors.response.use(
   }
 )
 
-// Ingest client: inject Authorization Bearer
+// ─── Ingest client interceptors ───────────────────────────────────────────
+
 ingestClient.interceptors.request.use((config) => {
-  const token = getAccessToken()
-  if (token) config.headers['Authorization'] = `Bearer ${token}`
+  if (_inMemoryAccessToken) {
+    config.headers['Authorization'] = `Bearer ${_inMemoryAccessToken}`
+  }
   return config
 })
 
