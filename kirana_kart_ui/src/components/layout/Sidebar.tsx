@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Ticket, TreeDeciduous,
   BookOpen, Shield, Users, BarChart3, Settings,
   ChevronLeft, ChevronRight, LogOut, BrainCircuit, FlaskConical, UserCog, Cpu, ShieldCheck,
-  Headphones, ListChecks, BarChart2, FileBarChart2,
+  Headphones, ListChecks, BarChart2, FileBarChart2, Zap, Clock,
   type LucideIcon,
 } from 'lucide-react'
 import { hasPermission, type AppModule, type Permission } from '@/lib/access'
@@ -61,10 +61,13 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: 'CRM',
     items: [
-      { label: 'Queue',          icon: Headphones,    path: '/crm',           module: 'crm' as AppModule },
-      { label: 'My Dashboard',   icon: ListChecks,    path: '/crm/dashboard', module: 'crm' as AppModule },
-      { label: 'Team Dashboard', icon: BarChart2,     path: '/crm/admin',     module: 'crm' as AppModule, permission: 'admin' as Permission },
-      { label: 'Reports',        icon: FileBarChart2, path: '/crm/reports',   module: 'crm' as AppModule, permission: 'admin' as Permission },
+      { label: 'Queue',          icon: Headphones,    path: '/crm',               module: 'crm' as AppModule },
+      { label: 'My Dashboard',   icon: ListChecks,    path: '/crm/dashboard',     module: 'crm' as AppModule },
+      { label: 'Team Dashboard', icon: BarChart2,     path: '/crm/admin',         module: 'crm' as AppModule, permission: 'admin' as Permission },
+      { label: 'Groups',         icon: Users,         path: '/crm/groups',        module: 'crm' as AppModule, permission: 'admin' as Permission },
+      { label: 'Automation',     icon: Zap,           path: '/crm/automation',    module: 'crm' as AppModule, permission: 'admin' as Permission },
+      { label: 'SLA Policies',   icon: Clock,         path: '/crm/sla-policies',  module: 'crm' as AppModule, permission: 'admin' as Permission },
+      { label: 'Reports',        icon: FileBarChart2, path: '/crm/reports',       module: 'crm' as AppModule, permission: 'admin' as Permission },
     ],
   },
   {

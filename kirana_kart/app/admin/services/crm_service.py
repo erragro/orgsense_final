@@ -261,12 +261,113 @@ def ensure_crm_tables() -> None:
           ADD COLUMN IF NOT EXISTS crm_availability VARCHAR(20) DEFAULT 'ONLINE'
               CHECK (crm_availability IN ('ONLINE','BUSY','AWAY','OFFLINE'))
         """,
+
+        # 10. crm_groups — agent teams
+        """
+        CREATE TABLE IF NOT EXISTS kirana_kart.crm_groups (
+            id               SERIAL PRIMARY KEY,
+            name             VARCHAR(100) NOT NULL UNIQUE,
+            description      TEXT,
+            group_type       VARCHAR(30) NOT NULL DEFAULT 'SUPPORT'
+                                 CHECK (group_type IN ('SUPPORT','FRAUD_REVIEW','ESCALATION','SENIOR_REVIEW','CUSTOM')),
+            routing_strategy VARCHAR(20) NOT NULL DEFAULT 'ROUND_ROBIN'
+                                 CHECK (routing_strategy IN ('ROUND_ROBIN','LEAST_BUSY','MANUAL')),
+            is_active        BOOLEAN NOT NULL DEFAULT TRUE,
+            created_by       INTEGER REFERENCES kirana_kart.users(id) ON DELETE SET NULL,
+            created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+
+        # 11. crm_group_members
+        """
+        CREATE TABLE IF NOT EXISTS kirana_kart.crm_group_members (
+            group_id  INTEGER NOT NULL REFERENCES kirana_kart.crm_groups(id) ON DELETE CASCADE,
+            user_id   INTEGER NOT NULL REFERENCES kirana_kart.users(id) ON DELETE CASCADE,
+            role      VARCHAR(20) NOT NULL DEFAULT 'AGENT'
+                          CHECK (role IN ('AGENT','LEAD','MANAGER')),
+            added_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (group_id, user_id)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_crm_group_members_user ON kirana_kart.crm_group_members(user_id)",
+
+        # 12. crm_automation_rules
+        """
+        CREATE TABLE IF NOT EXISTS kirana_kart.crm_automation_rules (
+            id              SERIAL PRIMARY KEY,
+            name            VARCHAR(150) NOT NULL,
+            description     TEXT,
+            trigger_event   VARCHAR(40) NOT NULL
+                                CHECK (trigger_event IN (
+                                    'TICKET_CREATED','TICKET_UPDATED',
+                                    'SLA_WARNING','SLA_BREACHED')),
+            condition_logic VARCHAR(3) NOT NULL DEFAULT 'AND'
+                                CHECK (condition_logic IN ('AND','OR')),
+            conditions      JSONB NOT NULL DEFAULT '[]',
+            actions         JSONB NOT NULL DEFAULT '[]',
+            is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+            priority        INTEGER NOT NULL DEFAULT 100,
+            run_count       INTEGER NOT NULL DEFAULT 0,
+            last_run_at     TIMESTAMPTZ,
+            is_seeded       BOOLEAN NOT NULL DEFAULT FALSE,
+            created_by      INTEGER REFERENCES kirana_kart.users(id) ON DELETE SET NULL,
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_crm_auto_rules_trigger ON kirana_kart.crm_automation_rules(trigger_event, is_active)",
+
+        # 13. crm_sla_policies (DB-driven, replaces hardcoded dict)
+        """
+        CREATE TABLE IF NOT EXISTS kirana_kart.crm_sla_policies (
+            id                     SERIAL PRIMARY KEY,
+            queue_type             VARCHAR(40) NOT NULL UNIQUE,
+            resolution_minutes     INTEGER NOT NULL,
+            first_response_minutes INTEGER NOT NULL,
+            is_active              BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_by             INTEGER REFERENCES kirana_kart.users(id) ON DELETE SET NULL,
+            updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+
+        # group_id column on hitl_queue
+        """
+        ALTER TABLE kirana_kart.hitl_queue
+          ADD COLUMN IF NOT EXISTS group_id INTEGER
+              REFERENCES kirana_kart.crm_groups(id) ON DELETE SET NULL
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_hitl_group_id ON kirana_kart.hitl_queue(group_id)",
     ]
 
     with get_db_session() as session:
         for stmt in ddl_statements:
             session.execute(text(stmt.strip()))
         logger.info("CRM tables ensured.")
+
+    # Seed SLA policies with default values (idempotent)
+    _seed_sla_policies()
+
+
+def _seed_sla_policies() -> None:
+    """Insert default SLA policy rows if not present."""
+    defaults = [
+        ("ESCALATION_QUEUE", 60, 15),
+        ("SLA_BREACH_REVIEW", 120, 20),
+        ("SENIOR_REVIEW", 240, 30),
+        ("MANUAL_REVIEW", 240, 30),
+        ("STANDARD_REVIEW", 480, 60),
+    ]
+    with get_db_session() as session:
+        for qt, res, fr in defaults:
+            session.execute(
+                text("""
+                    INSERT INTO kirana_kart.crm_sla_policies
+                        (queue_type, resolution_minutes, first_response_minutes)
+                    VALUES (:qt, :res, :fr)
+                    ON CONFLICT (queue_type) DO NOTHING
+                """),
+                {"qt": qt, "res": res, "fr": fr},
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -277,14 +378,39 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _get_sla_minutes_db(queue_type: str) -> tuple[int, int]:
+    """Read resolution + first_response minutes from crm_sla_policies table."""
+    try:
+        with get_db_session() as session:
+            row = session.execute(
+                text("""
+                    SELECT resolution_minutes, first_response_minutes
+                    FROM kirana_kart.crm_sla_policies
+                    WHERE queue_type = :qt AND is_active = TRUE
+                """),
+                {"qt": queue_type},
+            ).fetchone()
+            if row:
+                return row.resolution_minutes, row.first_response_minutes
+    except Exception:
+        pass
+    # Fallback to hardcoded
+    return (
+        SLA_RESOLUTION_MINUTES.get(queue_type, 480),
+        SLA_FIRST_RESPONSE_MINUTES.get(queue_type, 60),
+    )
+
+
 def _sla_due(queue_type: str, from_ts: datetime | None = None) -> datetime:
     ts = from_ts or _now()
-    return ts + timedelta(minutes=SLA_RESOLUTION_MINUTES.get(queue_type, 480))
+    res_min, _ = _get_sla_minutes_db(queue_type)
+    return ts + timedelta(minutes=res_min)
 
 
 def _first_response_due(queue_type: str, from_ts: datetime | None = None) -> datetime:
     ts = from_ts or _now()
-    return ts + timedelta(minutes=SLA_FIRST_RESPONSE_MINUTES.get(queue_type, 60))
+    _, fr_min = _get_sla_minutes_db(queue_type)
+    return ts + timedelta(minutes=fr_min)
 
 
 def _log_action(
@@ -443,7 +569,17 @@ def enqueue_ticket(
         ).fetchone()
         queue_id = row.id
         logger.info("CRM enqueued ticket_id=%s → queue_id=%s", ticket_id, queue_id)
-        return queue_id
+
+    # Run automation rules (non-fatal, outside the session)
+    try:
+        from app.admin.services.crm_automation_engine import run_for_ticket
+        applied = run_for_ticket("TICKET_CREATED", queue_id)
+        if applied:
+            logger.info("Automation: %d rule(s) applied on enqueue for queue_id=%s", applied, queue_id)
+    except Exception as exc:
+        logger.warning("Automation engine skipped on enqueue (queue_id=%s): %s", queue_id, exc)
+
+    return queue_id
 
 
 # ---------------------------------------------------------------------------
@@ -1901,3 +2037,356 @@ def auto_escalate_overdue() -> int:
 
     logger.info("Auto-escalated %d overdue CRM tickets", count)
     return count
+
+
+# ---------------------------------------------------------------------------
+# Groups
+# ---------------------------------------------------------------------------
+
+
+def list_groups(include_inactive: bool = False) -> list[dict]:
+    with get_db_session() as session:
+        rows = session.execute(
+            text("""
+                SELECT g.id, g.name, g.description, g.group_type, g.routing_strategy,
+                       g.is_active, g.created_at,
+                       COUNT(m.user_id) AS member_count
+                FROM kirana_kart.crm_groups g
+                LEFT JOIN kirana_kart.crm_group_members m ON m.group_id = g.id
+                WHERE (:inc_inactive OR g.is_active = TRUE)
+                GROUP BY g.id
+                ORDER BY g.name ASC
+            """),
+            {"inc_inactive": include_inactive},
+        ).mappings().fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_group(group_id: int) -> dict | None:
+    with get_db_session() as session:
+        row = session.execute(
+            text("""
+                SELECT g.id, g.name, g.description, g.group_type, g.routing_strategy,
+                       g.is_active, g.created_at,
+                       COUNT(m.user_id) AS member_count
+                FROM kirana_kart.crm_groups g
+                LEFT JOIN kirana_kart.crm_group_members m ON m.group_id = g.id
+                WHERE g.id = :gid
+                GROUP BY g.id
+            """),
+            {"gid": group_id},
+        ).mappings().first()
+        if not row:
+            return None
+        result = dict(row)
+        # Fetch members
+        members = session.execute(
+            text("""
+                SELECT m.user_id, m.role, m.added_at,
+                       u.email, u.full_name, u.crm_availability
+                FROM kirana_kart.crm_group_members m
+                JOIN kirana_kart.users u ON u.id = m.user_id
+                WHERE m.group_id = :gid
+                ORDER BY u.full_name ASC
+            """),
+            {"gid": group_id},
+        ).mappings().fetchall()
+        result["members"] = [dict(m) for m in members]
+        return result
+
+
+def create_group(
+    name: str,
+    description: str | None,
+    group_type: str,
+    routing_strategy: str,
+    creator: UserContext,
+) -> dict:
+    valid_types = {"SUPPORT", "FRAUD_REVIEW", "ESCALATION", "SENIOR_REVIEW", "CUSTOM"}
+    valid_strategies = {"ROUND_ROBIN", "LEAST_BUSY", "MANUAL"}
+    if group_type not in valid_types:
+        raise ValueError(f"Invalid group_type: {group_type}")
+    if routing_strategy not in valid_strategies:
+        raise ValueError(f"Invalid routing_strategy: {routing_strategy}")
+    with get_db_session() as session:
+        row = session.execute(
+            text("""
+                INSERT INTO kirana_kart.crm_groups
+                    (name, description, group_type, routing_strategy, created_by)
+                VALUES (:name, :desc, :gtype, :strategy, :creator)
+                RETURNING id, name, description, group_type, routing_strategy, is_active, created_at
+            """),
+            {
+                "name": name, "desc": description,
+                "gtype": group_type, "strategy": routing_strategy,
+                "creator": creator.id,
+            },
+        ).mappings().first()
+        result = dict(row)
+        result["member_count"] = 0
+        result["members"] = []
+        return result
+
+
+def update_group(
+    group_id: int,
+    name: str | None,
+    description: str | None,
+    group_type: str | None,
+    routing_strategy: str | None,
+    is_active: bool | None,
+) -> dict | None:
+    updates = []
+    params: dict[str, Any] = {"gid": group_id}
+    if name is not None:
+        updates.append("name = :name"); params["name"] = name
+    if description is not None:
+        updates.append("description = :desc"); params["desc"] = description
+    if group_type is not None:
+        updates.append("group_type = :gtype"); params["gtype"] = group_type
+    if routing_strategy is not None:
+        updates.append("routing_strategy = :strategy"); params["strategy"] = routing_strategy
+    if is_active is not None:
+        updates.append("is_active = :active"); params["active"] = is_active
+    if not updates:
+        return get_group(group_id)
+    with get_db_session() as session:
+        session.execute(
+            text(f"UPDATE kirana_kart.crm_groups SET {', '.join(updates)} WHERE id = :gid"),
+            params,
+        )
+    return get_group(group_id)
+
+
+def add_group_member(group_id: int, user_id: int, role: str = "AGENT") -> None:
+    valid_roles = {"AGENT", "LEAD", "MANAGER"}
+    if role not in valid_roles:
+        role = "AGENT"
+    with get_db_session() as session:
+        session.execute(
+            text("""
+                INSERT INTO kirana_kart.crm_group_members (group_id, user_id, role)
+                VALUES (:gid, :uid, :role)
+                ON CONFLICT (group_id, user_id) DO UPDATE SET role = EXCLUDED.role
+            """),
+            {"gid": group_id, "uid": user_id, "role": role},
+        )
+
+
+def remove_group_member(group_id: int, user_id: int) -> None:
+    with get_db_session() as session:
+        session.execute(
+            text("DELETE FROM kirana_kart.crm_group_members WHERE group_id = :gid AND user_id = :uid"),
+            {"gid": group_id, "uid": user_id},
+        )
+
+
+def assign_ticket_to_group(queue_id: int, group_id: int, actor: UserContext) -> dict:
+    """Assign ticket to a group and auto-dispatch based on routing strategy."""
+    from app.admin.services.crm_automation_engine import _auto_dispatch_to_group
+    with get_db_session() as session:
+        hq = session.execute(
+            text("SELECT id, ticket_id FROM kirana_kart.hitl_queue WHERE id = :qid"),
+            {"qid": queue_id},
+        ).fetchone()
+        if not hq:
+            raise ValueError(f"Queue item {queue_id} not found")
+
+        grp = session.execute(
+            text("SELECT id, name, routing_strategy FROM kirana_kart.crm_groups WHERE id = :gid AND is_active = TRUE"),
+            {"gid": group_id},
+        ).fetchone()
+        if not grp:
+            raise ValueError(f"Group {group_id} not found or inactive")
+
+        session.execute(
+            text("UPDATE kirana_kart.hitl_queue SET group_id = :gid, updated_at = NOW() WHERE id = :qid"),
+            {"gid": group_id, "qid": queue_id},
+        )
+
+        dispatched = False
+        if grp.routing_strategy in ("ROUND_ROBIN", "LEAST_BUSY"):
+            _auto_dispatch_to_group(group_id, queue_id, hq.ticket_id, grp.routing_strategy, session)
+            dispatched = True
+
+        _log_action(session, hq.ticket_id, queue_id, actor.id, "REASSIGN",
+                    after_value={"group_id": group_id, "group_name": grp.name})
+
+    return {"queue_id": queue_id, "group_id": group_id, "auto_dispatched": dispatched}
+
+
+# ---------------------------------------------------------------------------
+# SLA Policies
+# ---------------------------------------------------------------------------
+
+
+def list_sla_policies() -> list[dict]:
+    with get_db_session() as session:
+        rows = session.execute(
+            text("""
+                SELECT p.id, p.queue_type, p.resolution_minutes, p.first_response_minutes,
+                       p.is_active, p.updated_at,
+                       u.full_name AS updated_by_name
+                FROM kirana_kart.crm_sla_policies p
+                LEFT JOIN kirana_kart.users u ON u.id = p.updated_by
+                ORDER BY p.resolution_minutes ASC
+            """)
+        ).mappings().fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_sla_policy(
+    queue_type: str,
+    resolution_minutes: int | None,
+    first_response_minutes: int | None,
+    actor: UserContext,
+) -> dict | None:
+    if queue_type not in VALID_QUEUE_TYPES:
+        raise ValueError(f"Invalid queue_type: {queue_type}")
+    updates = ["updated_at = NOW()", "updated_by = :actor"]
+    params: dict[str, Any] = {"qt": queue_type, "actor": actor.id}
+    if resolution_minutes is not None:
+        if resolution_minutes < 1:
+            raise ValueError("resolution_minutes must be >= 1")
+        updates.append("resolution_minutes = :res")
+        params["res"] = resolution_minutes
+    if first_response_minutes is not None:
+        if first_response_minutes < 1:
+            raise ValueError("first_response_minutes must be >= 1")
+        updates.append("first_response_minutes = :fr")
+        params["fr"] = first_response_minutes
+    with get_db_session() as session:
+        session.execute(
+            text(f"""
+                UPDATE kirana_kart.crm_sla_policies
+                SET {', '.join(updates)}
+                WHERE queue_type = :qt
+            """),
+            params,
+        )
+    rows = list_sla_policies()
+    return next((r for r in rows if r["queue_type"] == queue_type), None)
+
+
+# ---------------------------------------------------------------------------
+# Automation Rules CRUD
+# ---------------------------------------------------------------------------
+
+
+def list_automation_rules() -> list[dict]:
+    with get_db_session() as session:
+        rows = session.execute(
+            text("""
+                SELECT r.id, r.name, r.description, r.trigger_event,
+                       r.condition_logic, r.conditions, r.actions,
+                       r.is_active, r.priority, r.run_count, r.last_run_at,
+                       r.is_seeded, r.created_at, r.updated_at,
+                       u.full_name AS created_by_name
+                FROM kirana_kart.crm_automation_rules r
+                LEFT JOIN kirana_kart.users u ON u.id = r.created_by
+                ORDER BY r.priority ASC, r.id ASC
+            """)
+        ).mappings().fetchall()
+        result = []
+        for r in rows:
+            row = dict(r)
+            # Ensure conditions/actions are lists
+            if isinstance(row.get("conditions"), str):
+                import json
+                row["conditions"] = json.loads(row["conditions"] or "[]")
+            if isinstance(row.get("actions"), str):
+                import json
+                row["actions"] = json.loads(row["actions"] or "[]")
+            result.append(row)
+        return result
+
+
+def create_automation_rule(
+    name: str,
+    trigger_event: str,
+    conditions: list[dict],
+    actions: list[dict],
+    description: str | None = None,
+    condition_logic: str = "AND",
+    priority: int = 100,
+    actor: UserContext | None = None,
+) -> dict:
+    import json
+    valid_triggers = {"TICKET_CREATED", "TICKET_UPDATED", "SLA_WARNING", "SLA_BREACHED"}
+    if trigger_event not in valid_triggers:
+        raise ValueError(f"Invalid trigger_event: {trigger_event}")
+    if condition_logic not in ("AND", "OR"):
+        condition_logic = "AND"
+    with get_db_session() as session:
+        row = session.execute(
+            text("""
+                INSERT INTO kirana_kart.crm_automation_rules
+                    (name, description, trigger_event, condition_logic,
+                     conditions, actions, priority, created_by)
+                VALUES
+                    (:name, :desc, :trigger, :logic,
+                     :conds::jsonb, :acts::jsonb, :priority, :creator)
+                RETURNING id
+            """),
+            {
+                "name": name, "desc": description,
+                "trigger": trigger_event, "logic": condition_logic,
+                "conds": json.dumps(conditions), "acts": json.dumps(actions),
+                "priority": priority,
+                "creator": actor.id if actor else None,
+            },
+        ).fetchone()
+        return {"id": row.id, "name": name, "trigger_event": trigger_event,
+                "is_active": True, "is_seeded": False}
+
+
+def update_automation_rule(
+    rule_id: int,
+    name: str | None = None,
+    description: str | None = None,
+    trigger_event: str | None = None,
+    conditions: list | None = None,
+    actions: list | None = None,
+    condition_logic: str | None = None,
+    priority: int | None = None,
+    is_active: bool | None = None,
+) -> None:
+    import json
+    updates = ["updated_at = NOW()"]
+    params: dict[str, Any] = {"rid": rule_id}
+    if name is not None:          updates.append("name = :name");           params["name"] = name
+    if description is not None:   updates.append("description = :desc");    params["desc"] = description
+    if trigger_event is not None: updates.append("trigger_event = :trigger"); params["trigger"] = trigger_event
+    if conditions is not None:    updates.append("conditions = :conds::jsonb"); params["conds"] = json.dumps(conditions)
+    if actions is not None:       updates.append("actions = :acts::jsonb");  params["acts"] = json.dumps(actions)
+    if condition_logic is not None: updates.append("condition_logic = :logic"); params["logic"] = condition_logic
+    if priority is not None:      updates.append("priority = :priority");   params["priority"] = priority
+    if is_active is not None:     updates.append("is_active = :active");    params["active"] = is_active
+    with get_db_session() as session:
+        session.execute(
+            text(f"UPDATE kirana_kart.crm_automation_rules SET {', '.join(updates)} WHERE id = :rid"),
+            params,
+        )
+
+
+def delete_automation_rule(rule_id: int) -> None:
+    with get_db_session() as session:
+        session.execute(
+            text("DELETE FROM kirana_kart.crm_automation_rules WHERE id = :rid"),
+            {"rid": rule_id},
+        )
+
+
+def toggle_automation_rule(rule_id: int) -> bool:
+    """Toggle is_active. Returns new state."""
+    with get_db_session() as session:
+        row = session.execute(
+            text("""
+                UPDATE kirana_kart.crm_automation_rules
+                SET is_active = NOT is_active, updated_at = NOW()
+                WHERE id = :rid
+                RETURNING is_active
+            """),
+            {"rid": rule_id},
+        ).fetchone()
+        return row.is_active if row else False

@@ -14,6 +14,9 @@ import type {
   SavedView,
   ActionRequest,
   QueueFilters,
+  Group,
+  AutomationRule,
+  SLAPolicy,
 } from '@/types/crm.types'
 
 export const crmApi = {
@@ -164,6 +167,61 @@ export const crmApi = {
     queue_type?: string
     agent_id?: number
   }) => governanceClient.get<Record<string, unknown>[]>('/crm/reports', { params }),
+
+  // -------------------------------------------------------------------------
+  // Groups
+  // -------------------------------------------------------------------------
+  groups: {
+    list: (params?: { include_inactive?: boolean }) =>
+      governanceClient.get<Group[]>('/crm/groups', { params }),
+    get: (id: number) =>
+      governanceClient.get<Group>(`/crm/groups/${id}`),
+    create: (body: { name: string; description?: string; group_type: string; routing_strategy: string }) =>
+      governanceClient.post<Group>('/crm/groups', body),
+    update: (id: number, body: { name?: string; description?: string; routing_strategy?: string; is_active?: boolean }) =>
+      governanceClient.patch<Group>(`/crm/groups/${id}`, body),
+    addMember: (groupId: number, body: { user_id: number; role?: string }) =>
+      governanceClient.post(`/crm/groups/${groupId}/members`, body),
+    removeMember: (groupId: number, userId: number) =>
+      governanceClient.delete(`/crm/groups/${groupId}/members/${userId}`),
+    assignTicket: (queueId: number, groupId: number) =>
+      governanceClient.post(`/crm/queue/${queueId}/assign-group`, { group_id: groupId }),
+  },
+
+  // -------------------------------------------------------------------------
+  // Automation Rules
+  // -------------------------------------------------------------------------
+  automationRules: {
+    list: () =>
+      governanceClient.get<AutomationRule[]>('/crm/automation-rules'),
+    schema: () =>
+      governanceClient.get('/crm/automation-rules/schema'),
+    create: (body: {
+      name: string; description?: string; trigger_event: string;
+      condition_logic?: string; conditions: any[]; actions: any[]; priority?: number
+    }) => governanceClient.post<AutomationRule>('/crm/automation-rules', body),
+    update: (id: number, body: Partial<{
+      name: string; description: string; trigger_event: string;
+      condition_logic: string; conditions: any[]; actions: any[];
+      priority: number; is_active: boolean
+    }>) => governanceClient.patch(`/crm/automation-rules/${id}`, body),
+    delete: (id: number) =>
+      governanceClient.delete(`/crm/automation-rules/${id}`),
+    toggle: (id: number) =>
+      governanceClient.post<{ is_active: boolean }>(`/crm/automation-rules/${id}/toggle`),
+    preview: (body: { conditions: any[]; condition_logic?: string; trigger_event?: string }) =>
+      governanceClient.post('/crm/automation-rules/preview', body),
+  },
+
+  // -------------------------------------------------------------------------
+  // SLA Policies
+  // -------------------------------------------------------------------------
+  slaPolicies: {
+    list: () =>
+      governanceClient.get<SLAPolicy[]>('/crm/sla-policies'),
+    update: (queueType: string, body: { resolution_minutes?: number; first_response_minutes?: number }) =>
+      governanceClient.patch<SLAPolicy>(`/crm/sla-policies/${queueType}`, body),
+  },
 }
 
 // -------------------------------------------------------------------------

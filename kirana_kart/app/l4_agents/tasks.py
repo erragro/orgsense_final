@@ -1105,6 +1105,29 @@ def beat_crm_auto_escalate():
         return {"error": str(exc)}
 
 
+@celery_app.task(name="app.l4_agents.tasks.beat_crm_automation_sla")
+def beat_crm_automation_sla():
+    """
+    Every 5 minutes: fire SLA_WARNING and SLA_BREACHED automation rule triggers.
+
+    SLA_WARNING fires for tickets within 15 minutes of their SLA deadline.
+    SLA_BREACHED fires for tickets that have passed their SLA deadline and
+    have not yet been notified.
+
+    This enables automation rules like:
+      "When SLA is breached AND queue != ESCALATION → change queue to SLA_BREACH_REVIEW"
+    """
+    try:
+        from app.admin.services.crm_automation_engine import run_sla_checks
+        result = run_sla_checks()
+        if result.get("warned") or result.get("breached"):
+            logger.info("[CRM Automation] SLA checks: %s", result)
+        return result
+    except Exception as exc:
+        logger.error("[CRM Automation] beat_crm_automation_sla failed: %s", exc)
+        return {"error": str(exc)}
+
+
 # ============================================================
 # CELERY BEAT SCHEDULE
 # ============================================================
@@ -1164,5 +1187,10 @@ celery_app.conf.beat_schedule = {
     "crm-auto-escalate-overdue-15m": {
         "task":     "app.l4_agents.tasks.beat_crm_auto_escalate",
         "schedule": 900.0,  # 15 minutes
+    },
+
+    "crm-automation-sla-every-5m": {
+        "task":     "app.l4_agents.tasks.beat_crm_automation_sla",
+        "schedule": 300.0,  # 5 minutes — SLA_WARNING + SLA_BREACHED triggers
     },
 }

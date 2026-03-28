@@ -32,6 +32,35 @@ import {
   Pin, PinOff, Plus, RefreshCw, IndianRupee,
 } from 'lucide-react'
 
+function GroupAssignSelector({ queueId }: { queueId: number }) {
+  const qc = useQueryClient()
+  const [groupId, setGroupId] = useState('')
+  const { data: groups = [] } = useQuery({
+    queryKey: ['crm-groups-active'],
+    queryFn: () => crmApi.groups.list().then(r => r.data),
+  })
+  const assignGroup = useMutation({
+    mutationFn: (gid: number) => crmApi.groups.assignTicket(queueId, gid),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['crm-queue-item', queueId] }); setGroupId('') },
+  })
+  if (!groups.length) return null
+  return (
+    <select
+      className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text"
+      value={groupId}
+      onChange={e => {
+        setGroupId(e.target.value)
+        if (e.target.value) assignGroup.mutate(Number(e.target.value))
+      }}
+    >
+      <option value="">Assign to group...</option>
+      {(groups as any[]).map((g: any) => (
+        <option key={g.id} value={g.id}>{g.name} ({g.routing_strategy.replace('_', ' ')})</option>
+      ))}
+    </select>
+  )
+}
+
 function SLARow({ label, dueAt, breached }: { label: string; dueAt: string; breached: boolean }) {
   const { urgency, minutesRemaining } = computeSLAUrgency(dueAt, breached)
   const color = urgency === 'red' ? 'text-red-500' : urgency === 'amber' ? 'text-amber-500' : 'text-green-500'
@@ -618,6 +647,7 @@ export default function CRMWorkViewPage() {
                     }}
                   />
                 )}
+                <GroupAssignSelector queueId={id} />
                 <Button
                   variant="ghost"
                   size="sm"

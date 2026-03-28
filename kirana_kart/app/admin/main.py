@@ -117,6 +117,8 @@ async def lifespan(app: FastAPI):
     ensure_schedule_table()
     ensure_master_action_codes_constraints()
     ensure_crm_tables()
+    from app.admin.services.crm_automation_engine import seed_cardinal_rules
+    seed_cardinal_rules()
     ensure_integration_tables()
     threading.Thread(
         target=run_integration_poller,

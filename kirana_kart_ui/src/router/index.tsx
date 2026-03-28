@@ -55,6 +55,9 @@ const CRMWorkViewPage       = lazy(() => import('@/pages/crm/CRMWorkViewPage'))
 const CRMAgentDashboardPage = lazy(() => import('@/pages/crm/CRMAgentDashboardPage'))
 const CRMAdminDashboardPage = lazy(() => import('@/pages/crm/CRMAdminDashboardPage'))
 const CRMReportsPage        = lazy(() => import('@/pages/crm/CRMReportsPage'))
+const CRMGroupsPage         = lazy(() => import('@/pages/crm/CRMGroupsPage'))
+const CRMAutomationPage     = lazy(() => import('@/pages/crm/CRMAutomationPage'))
+const CRMSLAPoliciesPage    = lazy(() => import('@/pages/crm/CRMSLAPoliciesPage'))
 
 export const router = createBrowserRouter([
   {
@@ -104,6 +107,9 @@ export const router = createBrowserRouter([
       { path: 'crm/dashboard',         element: protect(CRMAgentDashboardPage, 'crm') },
       { path: 'crm/admin',             element: protect(CRMAdminDashboardPage, 'crm', 'admin') },
       { path: 'crm/reports',           element: protect(CRMReportsPage,        'crm', 'admin') },
+      { path: 'crm/groups',            element: protect(CRMGroupsPage,         'crm', 'admin') },
+      { path: 'crm/automation',        element: protect(CRMAutomationPage,     'crm', 'admin') },
+      { path: 'crm/sla-policies',      element: protect(CRMSLAPoliciesPage,    'crm', 'admin') },
     ],
   },
 ])

@@ -562,3 +562,244 @@ def get_report(
         return svc.get_report(report_type, date_from, date_to, queue_type, agent_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Groups
+# ---------------------------------------------------------------------------
+
+
+class CreateGroupBody(BaseModel):
+    name: str
+    description: str | None = None
+    group_type: str = "SUPPORT"
+    routing_strategy: str = "ROUND_ROBIN"
+
+
+class UpdateGroupBody(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    group_type: str | None = None
+    routing_strategy: str | None = None
+    is_active: bool | None = None
+
+
+class AddMemberBody(BaseModel):
+    user_id: int
+    role: str = "AGENT"
+
+
+class AssignGroupBody(BaseModel):
+    group_id: int
+
+
+@router.get("/groups")
+def list_groups(
+    include_inactive: bool = False,
+    _u: UserContext = Depends(_view),
+):
+    return svc.list_groups(include_inactive=include_inactive)
+
+
+@router.post("/groups")
+def create_group(body: CreateGroupBody, current_user: UserContext = Depends(_admin)):
+    try:
+        return svc.create_group(
+            name=body.name,
+            description=body.description,
+            group_type=body.group_type,
+            routing_strategy=body.routing_strategy,
+            creator=current_user,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/groups/{group_id}")
+def get_group(group_id: int, _u: UserContext = Depends(_view)):
+    g = svc.get_group(group_id)
+    if not g:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return g
+
+
+@router.patch("/groups/{group_id}")
+def update_group(group_id: int, body: UpdateGroupBody, _u: UserContext = Depends(_admin)):
+    g = svc.update_group(
+        group_id=group_id,
+        name=body.name,
+        description=body.description,
+        group_type=body.group_type,
+        routing_strategy=body.routing_strategy,
+        is_active=body.is_active,
+    )
+    if not g:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return g
+
+
+@router.post("/groups/{group_id}/members")
+def add_group_member(group_id: int, body: AddMemberBody, _u: UserContext = Depends(_admin)):
+    svc.add_group_member(group_id, body.user_id, body.role)
+    return {"ok": True}
+
+
+@router.delete("/groups/{group_id}/members/{user_id}")
+def remove_group_member(group_id: int, user_id: int, _u: UserContext = Depends(_admin)):
+    svc.remove_group_member(group_id, user_id)
+    return {"ok": True}
+
+
+@router.post("/queue/{queue_id}/assign-group")
+def assign_ticket_to_group(
+    queue_id: int,
+    body: AssignGroupBody,
+    current_user: UserContext = Depends(_edit),
+):
+    try:
+        return svc.assign_ticket_to_group(queue_id, body.group_id, current_user)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# SLA Policies
+# ---------------------------------------------------------------------------
+
+
+class UpdateSLABody(BaseModel):
+    resolution_minutes: int | None = None
+    first_response_minutes: int | None = None
+
+
+@router.get("/sla-policies")
+def list_sla_policies(_u: UserContext = Depends(_view)):
+    return svc.list_sla_policies()
+
+
+@router.patch("/sla-policies/{queue_type}")
+def update_sla_policy(
+    queue_type: str,
+    body: UpdateSLABody,
+    current_user: UserContext = Depends(_admin),
+):
+    try:
+        result = svc.update_sla_policy(
+            queue_type=queue_type,
+            resolution_minutes=body.resolution_minutes,
+            first_response_minutes=body.first_response_minutes,
+            actor=current_user,
+        )
+        return result or {"ok": True}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Automation Rules
+# ---------------------------------------------------------------------------
+
+
+class RuleCondition(BaseModel):
+    field: str
+    operator: str
+    value: str
+
+
+class RuleAction(BaseModel):
+    action_type: str
+    params: dict = {}
+
+
+class CreateRuleBody(BaseModel):
+    name: str
+    description: str | None = None
+    trigger_event: str
+    condition_logic: str = "AND"
+    conditions: list[RuleCondition] = []
+    actions: list[RuleAction] = []
+    priority: int = 100
+
+
+class UpdateRuleBody(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    trigger_event: str | None = None
+    condition_logic: str | None = None
+    conditions: list[RuleCondition] | None = None
+    actions: list[RuleAction] | None = None
+    priority: int | None = None
+    is_active: bool | None = None
+
+
+class PreviewRuleBody(BaseModel):
+    conditions: list[RuleCondition]
+    condition_logic: str = "AND"
+    trigger_event: str = "TICKET_CREATED"
+
+
+@router.get("/automation-rules")
+def list_automation_rules(_u: UserContext = Depends(_admin)):
+    return svc.list_automation_rules()
+
+
+@router.get("/automation-rules/schema")
+def get_rule_schema(_u: UserContext = Depends(_admin)):
+    from app.admin.services.crm_automation_engine import get_condition_schema
+    return get_condition_schema()
+
+
+@router.post("/automation-rules")
+def create_automation_rule(body: CreateRuleBody, current_user: UserContext = Depends(_admin)):
+    try:
+        return svc.create_automation_rule(
+            name=body.name,
+            trigger_event=body.trigger_event,
+            conditions=[c.dict() for c in body.conditions],
+            actions=[a.dict() for a in body.actions],
+            description=body.description,
+            condition_logic=body.condition_logic,
+            priority=body.priority,
+            actor=current_user,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.patch("/automation-rules/{rule_id}")
+def update_automation_rule(rule_id: int, body: UpdateRuleBody, _u: UserContext = Depends(_admin)):
+    svc.update_automation_rule(
+        rule_id=rule_id,
+        name=body.name,
+        description=body.description,
+        trigger_event=body.trigger_event,
+        conditions=[c.dict() for c in body.conditions] if body.conditions is not None else None,
+        actions=[a.dict() for a in body.actions] if body.actions is not None else None,
+        condition_logic=body.condition_logic,
+        priority=body.priority,
+        is_active=body.is_active,
+    )
+    return {"ok": True}
+
+
+@router.delete("/automation-rules/{rule_id}")
+def delete_automation_rule(rule_id: int, _u: UserContext = Depends(_admin)):
+    svc.delete_automation_rule(rule_id)
+    return {"ok": True}
+
+
+@router.post("/automation-rules/{rule_id}/toggle")
+def toggle_automation_rule(rule_id: int, _u: UserContext = Depends(_admin)):
+    new_state = svc.toggle_automation_rule(rule_id)
+    return {"is_active": new_state}
+
+
+@router.post("/automation-rules/preview")
+def preview_automation_rule(body: PreviewRuleBody, _u: UserContext = Depends(_admin)):
+    from app.admin.services.crm_automation_engine import preview_rule
+    matches = preview_rule(
+        conditions=[c.dict() for c in body.conditions],
+        logic=body.condition_logic,
+        trigger=body.trigger_event,
+    )
+    return {"count": len(matches), "matches": matches}

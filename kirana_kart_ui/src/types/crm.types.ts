@@ -317,3 +317,79 @@ export const ACTION_TYPE_LABELS: Record<string, string> = {
   BULK_CLOSE: 'Bulk Closed',
   BULK_STATUS: 'Bulk Status Change',
 }
+
+// ---------------------------------------------------------------------------
+// Groups
+// ---------------------------------------------------------------------------
+
+export type GroupType = 'SUPPORT' | 'FRAUD_REVIEW' | 'ESCALATION' | 'SENIOR_REVIEW' | 'CUSTOM'
+export type RoutingStrategy = 'ROUND_ROBIN' | 'LEAST_BUSY' | 'MANUAL'
+export type MemberRole = 'AGENT' | 'LEAD' | 'MANAGER'
+
+export interface GroupMember {
+  user_id: number
+  role: MemberRole
+  added_at: string
+  email: string
+  full_name: string | null
+  crm_availability: string
+}
+
+export interface Group {
+  id: number
+  name: string
+  description: string | null
+  group_type: GroupType
+  routing_strategy: RoutingStrategy
+  is_active: boolean
+  created_at: string
+  member_count: number
+  members?: GroupMember[]
+}
+
+// ---------------------------------------------------------------------------
+// Automation Rules
+// ---------------------------------------------------------------------------
+
+export interface RuleCondition {
+  field: string
+  operator: string
+  value: string
+}
+
+export interface RuleAction {
+  action_type: string
+  params: Record<string, any>
+}
+
+export interface AutomationRule {
+  id: number
+  name: string
+  description: string | null
+  trigger_event: string
+  condition_logic: 'AND' | 'OR'
+  conditions: RuleCondition[]
+  actions: RuleAction[]
+  is_active: boolean
+  priority: number
+  run_count: number
+  last_run_at: string | null
+  is_seeded: boolean
+  created_by_name: string | null
+  created_at: string
+  updated_at: string
+}
+
+// ---------------------------------------------------------------------------
+// SLA Policies
+// ---------------------------------------------------------------------------
+
+export interface SLAPolicy {
+  id: number
+  queue_type: string
+  resolution_minutes: number
+  first_response_minutes: number
+  is_active: boolean
+  updated_at: string | null
+  updated_by_name: string | null
+}
