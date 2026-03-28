@@ -53,7 +53,11 @@ services:
       LLM_API_BASE_URL: https://api.openai.com/v1
       LOG_FORMAT: text
       LOG_LEVEL: INFO
-      PROMETHEUS_ENABLED: "false"
+      PROMETHEUS_ENABLED: "true"
+      OTLP_ENDPOINT: "http://otel-collector:4317"
+      SERVICE_NAME: "kirana-kart-governance"
+      OTEL_SAMPLE_RATE: "1.0"
+      DEPLOYMENT_ENV: "development"
       # BI Agent read-only credentials — SELECT-only role, not a superuser
       BI_DB_USER: bi_readonly
       BI_DB_PASSWORD: REDACTED
@@ -84,6 +88,7 @@ services:
       - postgres
       - redis
       - weaviate
+      - otel-collector
     ports:
       - "8001:8001"
 
@@ -110,10 +115,15 @@ services:
       LLM_API_BASE_URL: https://api.openai.com/v1
       LOG_FORMAT: text
       LOG_LEVEL: INFO
-      PROMETHEUS_ENABLED: "false"
+      PROMETHEUS_ENABLED: "true"
+      OTLP_ENDPOINT: "http://otel-collector:4317"
+      SERVICE_NAME: "kirana-kart-ingest"
+      OTEL_SAMPLE_RATE: "1.0"
+      DEPLOYMENT_ENV: "development"
     depends_on:
       - postgres
       - redis
+      - otel-collector
     ports:
       - "8000:8000"
 
@@ -139,11 +149,16 @@ services:
       WEAVIATE_HOST: weaviate
       LOG_FORMAT: text
       LOG_LEVEL: INFO
+      OTLP_ENDPOINT: "http://otel-collector:4317"
+      SERVICE_NAME: "kirana-kart-worker-poll"
+      OTEL_SAMPLE_RATE: "1.0"
+      DEPLOYMENT_ENV: "development"
     depends_on:
       - postgres
       - redis
       - ingest
       - weaviate
+      - otel-collector
     restart: unless-stopped
 
   # Celery worker — executes process_ticket tasks (4-stage LLM pipeline)
@@ -168,10 +183,15 @@ services:
       WEAVIATE_HOST: weaviate
       LOG_FORMAT: text
       LOG_LEVEL: INFO
+      OTLP_ENDPOINT: "http://otel-collector:4317"
+      SERVICE_NAME: "kirana-kart-worker-celery"
+      OTEL_SAMPLE_RATE: "1.0"
+      DEPLOYMENT_ENV: "development"
     depends_on:
       - postgres
       - redis
       - weaviate
+      - otel-collector
     restart: unless-stopped
 
   ui:
@@ -186,6 +206,62 @@ services:
     ports:
       - "5173:5173"
 
+  # ── Observability stack ───────────────────────────────────────
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./observability/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus scrape endpoint (collector self-metrics)
+    restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14250:14250"  # gRPC model (collector → jaeger)
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+    ports:
+      - "9090:9090"
+    depends_on:
+      - governance
+      - ingest
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: REDACTED
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+      - jaeger
+    restart: unless-stopped
+
 volumes:
   pgdata:
   weaviate_data:
+  prometheus_data:
+  grafana_data:

@@ -24,8 +24,10 @@ Routes registered:
     GET  /system-status     — DB + Redis connectivity check
 """
 
+import logging
 import os
 import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,6 +35,29 @@ from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
 load_dotenv()
+
+from app.middleware.logging_middleware import configure_logging, CorrelationIdMiddleware
+from app.metrics import configure_otel, metrics_endpoint
+
+logger = logging.getLogger("kirana_kart.ingest")
+
+# ----------------------------------------------------------------
+# LIFESPAN — startup / shutdown hooks
+# ----------------------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Cardinal ingest plane starting")
+    yield
+    logger.info("Cardinal ingest plane shutting down")
+
+
+# ----------------------------------------------------------------
+# OBSERVABILITY — before app creation so FastAPIInstrumentor wraps
+# the ASGI stack before the middleware stack is frozen.
+# ----------------------------------------------------------------
+
+configure_logging()
 
 # ----------------------------------------------------------------
 # APP
@@ -43,6 +68,7 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS for local UI access
@@ -53,6 +79,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(CorrelationIdMiddleware)
+
+# OTel — after app + middleware are registered, before first request
+configure_otel(app, service_name="kirana-kart-ingest")
 
 # ----------------------------------------------------------------
 # ROUTE REGISTRATION
@@ -61,6 +91,7 @@ app.add_middleware(
 from app.l2_cardinal.routes import router as cardinal_router
 
 app.include_router(cardinal_router)
+app.add_route("/metrics", metrics_endpoint)
 
 # ----------------------------------------------------------------
 # HEALTH

@@ -1,7 +1,7 @@
 # Kirana Kart — AI Policy Governance & CRM Platform
 
-**Version:** 5.0.0
-**Stack:** FastAPI · React 19 · PostgreSQL · Weaviate · Redis · Celery · OpenAI · Docker
+**Version:** 5.1.0
+**Stack:** FastAPI · React 19 · PostgreSQL · Weaviate · Redis · Celery · OpenAI · Docker · OpenTelemetry · Jaeger · Prometheus · Grafana
 
 ---
 
@@ -65,7 +65,9 @@ It manages the complete lifecycle of business rules — from human-authored know
 
 ---
 
-## 8 Docker Containers
+## Docker Containers
+
+### Application (8)
 
 | Container | Port | Role |
 |---|---|---|
@@ -77,6 +79,80 @@ It manages the complete lifecycle of business rules — from human-authored know
 | `worker-poll` | — | Stream poll loop (dispatches to Celery) |
 | `worker-celery` | — | Celery worker (4-stage Cardinal pipeline) |
 | `ui` | 5173 | React 19 + Vite — frontend |
+
+### Observability (4)
+
+| Container | Port | Role |
+|---|---|---|
+| `otel-collector` | 4317 (gRPC) · 4318 (HTTP) | Receives OTLP spans from all services, forwards to Jaeger |
+| `jaeger` | 16686 | Distributed trace visualization UI |
+| `prometheus` | 9090 | Scrapes `/metrics` from governance + ingest every 15s |
+| `grafana` | 3001 | Dashboards pre-wired with Prometheus + Jaeger datasources |
+
+---
+
+## Observability
+
+Production-grade distributed tracing, metrics, and log correlation across all 4 application services.
+
+### Distributed Tracing — OpenTelemetry + Jaeger
+
+Every service ships spans to the OTel Collector over OTLP gRPC, which forwards them to Jaeger.
+
+**Auto-instrumented layers (all services):**
+- **FastAPI** — every HTTP route: method, path, status, duration
+- **SQLAlchemy** — every query and connection pool event
+- **Redis** — every command (streams, cache, Celery broker)
+- **httpx** — outbound LLM API calls (OpenAI) traced end-to-end
+- **Celery** — task enqueue + execute linked as parent/child spans
+
+**Manual spans (Cardinal 4-stage pipeline):**
+
+| Span | Key Attributes |
+|---|---|
+| `cardinal.process_ticket` | `ticket.id`, `stream.name`, `ticket.module`, `ticket.priority` |
+| `cardinal.stage0.classification` | `stage.model`, `stage.issue_type_l1`, `stage.confidence` |
+| `cardinal.stage1.evaluation` | `stage.model`, `stage.action_code`, `stage.fraud_segment`, `stage.greedy` |
+| `cardinal.stage2.validation` | `stage.model`, `stage.final_action`, `stage.pathway`, `stage.validation` |
+| `cardinal.stage3.response_generation` | `stage.model` (HITL only) |
+
+Exceptions are captured with `span.record_exception()` and `StatusCode.ERROR`.
+
+**Log correlation:** every log line emits `trace_id` and `span_id` so you can jump from a log in stdout directly to the corresponding Jaeger trace.
+
+**Sampling:** configurable via `OTEL_SAMPLE_RATE` (default `1.0` in dev — lower for prod, e.g. `0.1`).
+
+### Metrics — Prometheus + Grafana
+
+Prometheus scrapes `/metrics` from `governance:8001` and `ingest:8000` every 15s.
+
+Key metrics exposed:
+
+| Metric | Labels | Description |
+|---|---|---|
+| `kirana_kart_ingest_requests_total` | org, module, source, status | Ingest pipeline request count |
+| `kirana_kart_pipeline_duration_seconds` | module, priority | End-to-end Cardinal pipeline latency |
+| `kirana_kart_pipeline_phase_errors_total` | phase, error_code | Per-phase pipeline failures |
+| `kirana_kart_worker_tasks_total` | stream, status | Celery tasks processed |
+| `kirana_kart_worker_task_duration_seconds` | stream | LLM pipeline task latency |
+| `kirana_kart_worker_llm_calls_total` | stage, model, status | LLM API call count per stage |
+| `kirana_kart_vector_jobs_total` | status | KB vectorization jobs |
+| `kirana_kart_db_pool_checked_out` | — | SQLAlchemy pool checkout depth |
+| `kirana_kart_redis_operation_errors_total` | operation | Redis error count |
+
+Grafana at `:3001` is pre-provisioned with Prometheus and Jaeger datasources. Add dashboards as needed.
+
+### Observability Config Files
+
+```
+observability/
+├── otel-collector-config.yaml   # OTLP receiver → batch processor → Jaeger exporter
+├── prometheus.yml               # Scrape targets: governance, ingest, otel-collector
+└── grafana/
+    └── provisioning/
+        ├── datasources/         # Prometheus + Jaeger auto-provisioned
+        └── dashboards/          # Dashboard provider config
+```
 
 ---
 
@@ -105,6 +181,9 @@ docker compose up -d
 | Frontend | http://localhost:5173 |
 | Governance API docs | http://localhost:8001/docs |
 | Ingest API docs | http://localhost:8000/docs |
+| Jaeger (traces) | http://localhost:16686 |
+| Prometheus | http://localhost:9090 |
+| Grafana | http://localhost:3001 (admin / REDACTED) |
 
 ### 4. Default admin
 ```
@@ -433,6 +512,13 @@ MICROSOFT_CLIENT_SECRET=
 
 # App
 FRONTEND_URL=http://localhost:5173
+
+# Observability
+OTLP_ENDPOINT=http://otel-collector:4317   # leave blank to disable trace export
+OTEL_SAMPLE_RATE=1.0                        # 0.0–1.0; lower in production (e.g. 0.1)
+PROMETHEUS_ENABLED=true
+SERVICE_NAME=kirana-kart-governance         # overridden per service in compose
+DEPLOYMENT_ENV=development                  # surfaced as span attribute
 ```
 
 ---
@@ -460,6 +546,15 @@ docker compose down
 
 # Stop and wipe volumes (full reset)
 docker compose down -v
+
+# Open Jaeger trace UI
+open http://localhost:16686
+
+# Open Grafana
+open http://localhost:3001   # admin / REDACTED
+
+# Check Prometheus targets
+curl http://localhost:9090/api/v1/targets | python3 -m json.tool
 ```
 
 ---
@@ -499,6 +594,10 @@ docker compose down -v
 - [ ] Configure Celery Beat for `crm-auto-escalate-15m` task
 - [ ] Monitor Weaviate memory (default 1Gi limit in compose)
 - [ ] Rotate JWT secret on suspected compromise
+- [ ] Set `OTEL_SAMPLE_RATE` to 0.05–0.1 in production (100% tracing is too expensive at scale)
+- [ ] Replace in-process Jaeger with a production-grade backend (Grafana Tempo, Honeycomb, Datadog)
+- [ ] Change Grafana `admin` password (`GF_SECURITY_ADMIN_PASSWORD`)
+- [ ] Set `DEPLOYMENT_ENV=production` in all services
 
 ---
 

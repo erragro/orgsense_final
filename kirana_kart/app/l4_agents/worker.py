@@ -67,6 +67,12 @@ from celery import Celery
 from dotenv import load_dotenv
 
 from app.admin.redis_client import get_redis
+from contextlib import contextmanager
+
+@contextmanager
+def _nullcontext():
+    """Fallback no-op context manager used when _tracer is None."""
+    yield None
 
 # ============================================================
 # ENVIRONMENT
@@ -112,6 +118,40 @@ CLAIM_IDLE_MS = 60_000  # 60 seconds
 MAX_RETRIES = 3
 
 logger = logging.getLogger("cardinal.worker")
+
+
+# ============================================================
+# OPENTELEMETRY — worker bootstrap
+# ============================================================
+
+def _setup_worker_otel() -> None:
+    """
+    Initialise OTel for the Celery worker process.
+
+    Called once when this module is first imported (which happens when
+    Celery loads the task module). configure_otel() is idempotent, so
+    repeated imports are safe.
+    """
+    try:
+        from app.middleware.logging_middleware import configure_logging
+        from app.metrics import configure_otel
+        configure_logging()
+        configure_otel(service_name=os.getenv("SERVICE_NAME", "kirana-kart-worker-celery"))
+        from opentelemetry.instrumentation.celery import CeleryInstrumentor
+        CeleryInstrumentor().instrument()
+        logger.info("OTel Celery auto-instrumentation enabled")
+    except Exception as exc:
+        logger.warning("OTel worker setup skipped: %s", exc)
+
+
+_setup_worker_otel()
+
+# Tracer used for manual spans in the pipeline stages
+try:
+    from opentelemetry import trace as _otel_trace
+    _tracer = _otel_trace.get_tracer("cardinal.worker", schema_url="https://opentelemetry.io/schemas/1.26.0")
+except Exception:
+    _tracer = None  # type: ignore[assignment]
 
 
 # ============================================================
@@ -336,7 +376,24 @@ def process_ticket(
         execution_id, ticket_id, stream_name,
     )
 
-    try:
+    # Root span for the entire pipeline — child spans added per stage
+    _span_ctx = (
+        _tracer.start_as_current_span(
+            "cardinal.process_ticket",
+            kind=_otel_trace.SpanKind.CONSUMER,
+            attributes={
+                "ticket.id":       str(ticket_id),
+                "execution.id":    execution_id,
+                "stream.name":     stream_name,
+                "ticket.module":   fields.get("module", ""),
+                "ticket.priority": stream_name.split(":")[-1] if ":" in stream_name else "",
+            },
+        )
+        if _tracer else _nullcontext()
+    )
+
+    with _span_ctx as _root_span:
+      try:
         # ----------------------------------------------------------
         # Claim ticket in processing state
         # ----------------------------------------------------------
@@ -514,6 +571,11 @@ def process_ticket(
             "Task complete | execution_id=%s | ticket_id=%s | action=%s",
             execution_id, ticket_id, final_action,
         )
+        if _root_span:
+            _root_span.set_attribute("ticket.final_action", final_action)
+            _root_span.set_attribute("ticket.automation_pathway", automation_pathway)
+            _root_span.set_attribute("ticket.ai_confidence", str(
+                stage2_result.get("overall_confidence", "")))
 
         return {
             "execution_id":    execution_id,
@@ -522,19 +584,27 @@ def process_ticket(
             "status":          "completed",
         }
 
-    except WorkerError as exc:
+      except WorkerError as exc:
         logger.error(
             "WorkerError | execution_id=%s | ticket_id=%s | error=%s",
             execution_id, ticket_id, exc,
         )
+        if _root_span:
+            _root_span.record_exception(exc)
+            from opentelemetry.trace import StatusCode
+            _root_span.set_status(StatusCode.ERROR, str(exc))
         _handle_failure(execution_id, ticket_id, stream_name, msg_id, str(exc), self.request.retries)
         raise self.retry(exc=exc)
 
-    except Exception as exc:
+      except Exception as exc:
         logger.exception(
             "Unexpected error | execution_id=%s | ticket_id=%s | error=%s",
             execution_id, ticket_id, exc,
         )
+        if _root_span:
+            _root_span.record_exception(exc)
+            from opentelemetry.trace import StatusCode
+            _root_span.set_status(StatusCode.ERROR, str(exc))
         _handle_failure(execution_id, ticket_id, stream_name, msg_id, str(exc), self.request.retries)
         raise self.retry(exc=exc)
 
@@ -566,7 +636,18 @@ def _run_stage_0(
     from app.l4_agents.ecommerce.stage0_classifier import run as stage0_run
 
     logger.info("Stage 0 | ticket_id=%s | model=%s", ticket_id, MODEL_STAGE_0)
-    stage0 = stage0_run(ticket_id, execution_id, ticket_context, fields)
+    _s0_ctx = (
+        _tracer.start_as_current_span(
+            "cardinal.stage0.classification",
+            attributes={"ticket.id": str(ticket_id), "stage.model": MODEL_STAGE_0},
+        ) if _tracer else _nullcontext()
+    )
+    with _s0_ctx as _s0_span:
+        stage0 = stage0_run(ticket_id, execution_id, ticket_context, fields)
+        if _s0_span:
+            _s0_span.set_attribute("stage.issue_type_l1", str(stage0.get("issue_type_l1", "")))
+            _s0_span.set_attribute("stage.issue_type_l2", str(stage0.get("issue_type_l2", "")))
+            _s0_span.set_attribute("stage.confidence",    str(stage0.get("confidence", "")))
 
     result = {
         "llm_output_1_id": None,
@@ -649,7 +730,18 @@ def _run_stage_1(
     from app.l4_agents.ecommerce.stage1_evaluator import run as stage1_run
 
     logger.info("Stage 1 | ticket_id=%s | model=%s", ticket_id, MODEL_STAGE_1)
-    stage1 = stage1_run(ticket_id, execution_id, ticket_context, stage0_result, rules, fields)
+    _s1_ctx = (
+        _tracer.start_as_current_span(
+            "cardinal.stage1.evaluation",
+            attributes={"ticket.id": str(ticket_id), "stage.model": MODEL_STAGE_1},
+        ) if _tracer else _nullcontext()
+    )
+    with _s1_ctx as _s1_span:
+        stage1 = stage1_run(ticket_id, execution_id, ticket_context, stage0_result, rules, fields)
+        if _s1_span:
+            _s1_span.set_attribute("stage.action_code",    str(stage1.get("action_code", "")))
+            _s1_span.set_attribute("stage.fraud_segment",  str(stage1.get("fraud_segment", "")))
+            _s1_span.set_attribute("stage.greedy",         str(stage1.get("greedy_classification", "")))
 
     result = {
         "llm_output_2_id":        None,
@@ -810,7 +902,18 @@ def _run_stage_2(
     from app.l4_agents.ecommerce.stage2_validator import run as stage2_run
 
     logger.info("Stage 2 | ticket_id=%s | model=%s", ticket_id, MODEL_STAGE_2)
-    stage2 = stage2_run(ticket_id, execution_id, stage0_result, stage1_result, rules, fields)
+    _s2_ctx = (
+        _tracer.start_as_current_span(
+            "cardinal.stage2.validation",
+            attributes={"ticket.id": str(ticket_id), "stage.model": MODEL_STAGE_2},
+        ) if _tracer else _nullcontext()
+    )
+    with _s2_ctx as _s2_span:
+        stage2 = stage2_run(ticket_id, execution_id, stage0_result, stage1_result, rules, fields)
+        if _s2_span:
+            _s2_span.set_attribute("stage.final_action",   str(stage2.get("final_action_code", "")))
+            _s2_span.set_attribute("stage.pathway",        str(stage2.get("automation_pathway", "")))
+            _s2_span.set_attribute("stage.validation",     str(stage2.get("validation_status", "")))
 
     result = {
         "llm_output_3_id":        None,
@@ -955,7 +1058,14 @@ def _run_stage_3(
     from app.l4_agents.ecommerce.stage3_responder import run as stage3_run
 
     logger.info("Stage 3 | ticket_id=%s | model=%s", ticket_id, MODEL_STAGE_3)
-    return stage3_run(ticket_id, execution_id, stage0_result, stage1_result, stage2_result, fields)
+    _s3_ctx = (
+        _tracer.start_as_current_span(
+            "cardinal.stage3.response_generation",
+            attributes={"ticket.id": str(ticket_id), "stage.model": MODEL_STAGE_3},
+        ) if _tracer else _nullcontext()
+    )
+    with _s3_ctx:
+        return stage3_run(ticket_id, execution_id, stage0_result, stage1_result, stage2_result, fields)
 
 
 # ============================================================

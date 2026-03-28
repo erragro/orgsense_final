@@ -61,10 +61,31 @@ def set_correlation_id(value: str) -> None:
 # ============================================================
 
 class CorrelationIdFilter(logging.Filter):
-    """Adds correlation_id to every LogRecord automatically."""
+    """
+    Adds correlation_id, trace_id, and span_id to every LogRecord.
+
+    trace_id / span_id come from the active OpenTelemetry span when one
+    exists, making it trivial to jump from a log line to a Jaeger trace.
+    """
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.correlation_id = get_correlation_id() or "-"
+
+        # Inject OTel trace context if available
+        try:
+            from opentelemetry import trace as _otel_trace
+            span = _otel_trace.get_current_span()
+            ctx = span.get_span_context()
+            if ctx and ctx.is_valid:
+                record.trace_id = format(ctx.trace_id, "032x")
+                record.span_id  = format(ctx.span_id, "016x")
+            else:
+                record.trace_id = "-"
+                record.span_id  = "-"
+        except Exception:
+            record.trace_id = "-"
+            record.span_id  = "-"
+
         return True
 
 
@@ -94,13 +115,15 @@ def configure_logging() -> None:
         try:
             from pythonjsonlogger import jsonlogger
             fmt = jsonlogger.JsonFormatter(
-                fmt="%(asctime)s %(levelname)s %(name)s %(message)s %(correlation_id)s",
+                fmt=(
+                    "%(asctime)s %(levelname)s %(name)s %(message)s "
+                    "%(correlation_id)s %(trace_id)s %(span_id)s"
+                ),
                 datefmt="%Y-%m-%dT%H:%M:%S",
                 rename_fields={"asctime": "timestamp", "levelname": "level", "name": "logger"},
             )
             handler.setFormatter(fmt)
         except ImportError:
-            # Fallback if python-json-logger not installed yet
             _set_text_formatter(handler)
     else:
         _set_text_formatter(handler)
@@ -110,7 +133,7 @@ def configure_logging() -> None:
 
 def _set_text_formatter(handler: logging.StreamHandler) -> None:
     fmt = logging.Formatter(
-        fmt="%(asctime)s [%(levelname)s] %(name)s [%(correlation_id)s] %(message)s",
+        fmt="%(asctime)s [%(levelname)s] %(name)s [cid=%(correlation_id)s trace=%(trace_id)s span=%(span_id)s] %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
     handler.setFormatter(fmt)

@@ -108,8 +108,6 @@ def start_background_worker() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- Startup ---
-    configure_logging()
-    configure_otel(app)
     ensure_auth_tables()
     ensure_bootstrap_admin()
     ensure_bi_tables()
@@ -137,6 +135,13 @@ async def lifespan(app: FastAPI):
 
 
 # ============================================================
+# OBSERVABILITY — must run before app creation so FastAPIInstrumentor
+# can wrap the ASGI stack before the middleware stack is frozen.
+# ============================================================
+
+configure_logging()
+
+# ============================================================
 # APP
 # ============================================================
 
@@ -151,15 +156,8 @@ app = FastAPI(
 # CORS for UI — allow credentials (needed for Authorization header)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.frontend_url,
-        "http://localhost:5173", "http://127.0.0.1:5173",
-        # Allow any localhost port (Vite preview, dev tools, Claude preview)
-        *[f"http://localhost:{p}" for p in range(49000, 50000)],
-        *[f"http://127.0.0.1:{p}" for p in range(49000, 50000)],
-        *[f"http://localhost:{p}" for p in range(51000, 51200)],
-        *[f"http://127.0.0.1:{p}" for p in range(51000, 51200)],
-    ],
+    allow_origins=[settings.frontend_url],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -167,6 +165,10 @@ app.add_middleware(
 
 # Correlation ID injection + structured request logging
 app.add_middleware(CorrelationIdMiddleware)
+
+# OTel FastAPI instrumentation — called here (module level, after app creation,
+# before first request) so the middleware stack is not yet frozen.
+configure_otel(app)
 
 # Prometheus scrape endpoint
 app.add_route("/metrics", metrics_endpoint)

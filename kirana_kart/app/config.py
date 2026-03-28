@@ -221,6 +221,13 @@ class Settings(BaseSettings):
     )
     service_version: str = Field(default="3.3.0", alias="SERVICE_VERSION")
 
+    # Fraction of traces to sample (0.0–1.0). 1.0 = 100% (dev default).
+    # Lower in production (e.g. 0.1) to control collector load.
+    otel_sample_rate: float = Field(default=1.0, alias="OTEL_SAMPLE_RATE")
+
+    # Deployment environment tag attached to every span and metric.
+    deployment_env: str = Field(default="development", alias="DEPLOYMENT_ENV")
+
     # ============================================================
     # LOGGING
     # ============================================================
