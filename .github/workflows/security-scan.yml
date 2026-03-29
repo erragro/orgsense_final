@@ -31,8 +31,8 @@ jobs:
             --format json \
             -o security-audit-backend.json \
             --strict \
-            --ignore-vuln GHSA-x485-q6qp-5h5m
-        # GHSA-x485-q6qp-5h5m = pygments ReDoS — no upstream fix available (2026-03)
+            --ignore-vuln CVE-2026-4539
+        # CVE-2026-4539 = pygments AdlLexer ReDoS — no upstream fix available (2026-03)
 
       - name: Upload audit report
         if: always()
