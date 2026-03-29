@@ -38,3 +38,6 @@ config_local.py
 
 # Claude Code — local session state (permissions cache, not needed in repo)
 .claude/settings.local.json
+
+# Database exports — may contain credentials or PII
+kirana_kart/exports/

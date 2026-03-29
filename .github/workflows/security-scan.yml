@@ -28,10 +28,11 @@ jobs:
       - name: Run pip-audit
         run: |
           pip-audit -r kirana_kart/requirements.txt \
-            --output json \
-            --report security-audit-backend.json \
-            --strict
-        continue-on-error: false
+            --format json \
+            -o security-audit-backend.json \
+            --strict \
+            --ignore-vuln GHSA-x485-q6qp-5h5m
+        # GHSA-x485-q6qp-5h5m = pygments ReDoS — no upstream fix available (2026-03)
 
       - name: Upload audit report
         if: always()
@@ -47,10 +48,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: kirana_kart_ui/package-lock.json
 
@@ -61,7 +62,7 @@ jobs:
       - name: Run npm audit
         working-directory: kirana_kart_ui
         run: |
-          npm audit --audit-level=high --json > ../security-audit-frontend.json || true
+          npm audit --audit-level=high --json > security-audit-frontend.json || true
           # Fail the job if HIGH or CRITICAL vulnerabilities are found
           npm audit --audit-level=high
 
@@ -70,7 +71,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: frontend-security-report
-          path: security-audit-frontend.json
+          path: kirana_kart_ui/security-audit-frontend.json
 
   secret-scan:
     name: Secret Detection — detect hardcoded credentials
@@ -85,5 +86,3 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          args: detect --source . --verbose --redact --exit-code 1
