@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: governance
+  namespace: auralis
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: governance
+  template:
+    metadata:
+      labels:
+        app: governance
+    spec:
+      containers:
+      - name: governance
+        image: asia-south1-docker.pkg.dev/project-2d37241a-3276-4c0d-b31/auralis/governance:latest
+        command: ["uvicorn", "app.admin.main:app", "--host", "0.0.0.0", "--port", "8001"]
+        ports:
+        - containerPort: 8001
+        envFrom:
+        - secretRef:
+            name: auralis-env
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 60
+          periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: governance
+  namespace: auralis
+spec:
+  selector:
+    app: governance
+  ports:
+  - port: 8001
+    targetPort: 8001

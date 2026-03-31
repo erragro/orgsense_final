@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-celery
+  namespace: auralis
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: worker-celery
+  template:
+    metadata:
+      labels:
+        app: worker-celery
+    spec:
+      containers:
+      - name: worker
+        image: asia-south1-docker.pkg.dev/project-2d37241a-3276-4c0d-b31/auralis/governance:latest
+        command: ["celery", "-A", "app.l4_agents.tasks", "worker", "--loglevel=info", "--concurrency=4"]
+        envFrom:
+        - secretRef:
+            name: auralis-env
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-poll
+  namespace: auralis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker-poll
+  template:
+    metadata:
+      labels:
+        app: worker-poll
+    spec:
+      containers:
+      - name: worker-poll
+        image: asia-south1-docker.pkg.dev/project-2d37241a-3276-4c0d-b31/auralis/ingest:latest
+        command: ["python", "-m", "app.l4_agents.worker"]
+        envFrom:
+        - secretRef:
+            name: auralis-env
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"

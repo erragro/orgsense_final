@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weaviate
+  namespace: auralis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: weaviate
+  template:
+    metadata:
+      labels:
+        app: weaviate
+    spec:
+      containers:
+      - name: weaviate
+        image: semitechnologies/weaviate:1.24.4
+        ports:
+        - containerPort: 8080
+        - containerPort: 50051
+        env:
+        - name: AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED
+          value: "false"
+        - name: AUTHENTICATION_APIKEY_ENABLED
+          value: "true"
+        - name: AUTHENTICATION_APIKEY_ALLOWED_KEYS
+          valueFrom:
+            secretKeyRef:
+              name: auralis-env
+              key: WEAVIATE_API_KEY
+        - name: AUTHENTICATION_APIKEY_USERS
+          value: "auralis-app"
+        - name: PERSISTENCE_DATA_PATH
+          value: "/var/lib/weaviate"
+        - name: DEFAULT_VECTORIZER_MODULE
+          value: "none"
+        - name: ENABLE_MODULES
+          value: ""
+        - name: CLUSTER_HOSTNAME
+          value: "weaviate-0"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: weaviate-data
+          mountPath: /var/lib/weaviate
+      volumes:
+      - name: weaviate-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: weaviate
+  namespace: auralis
+spec:
+  selector:
+    app: weaviate
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  - name: grpc
+    port: 50051
+    targetPort: 50051

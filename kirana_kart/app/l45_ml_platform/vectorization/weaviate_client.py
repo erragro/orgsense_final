@@ -34,6 +34,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 WEAVIATE_HOST = os.getenv("WEAVIATE_HOST", "127.0.0.1")
 WEAVIATE_HTTP_PORT = os.getenv("WEAVIATE_HTTP_PORT", "8080")
+WEAVIATE_API_KEY = os.getenv("WEAVIATE_API_KEY", "")
 
 WEAVIATE_URL = f"http://{WEAVIATE_HOST}:{WEAVIATE_HTTP_PORT}"
 WEAVIATE_CLASS_NAME = "KBRule"
@@ -54,8 +55,9 @@ class WeaviateClient:
 
     def __init__(self):
 
-        # Initialize connection
-        self.client = weaviate.Client(url=WEAVIATE_URL)
+        # Initialize connection with API key auth
+        auth = weaviate.AuthApiKey(api_key=WEAVIATE_API_KEY) if WEAVIATE_API_KEY else None
+        self.client = weaviate.Client(url=WEAVIATE_URL, auth_client_secret=auth)
 
         if not self.client.is_ready():
             raise RuntimeError("Weaviate instance is not ready")

@@ -1,12 +1,16 @@
-FROM node:20-alpine
+# Production: serve pre-built static assets with nginx
+# Build is done on CI/local: npm run build → dist/
+FROM nginx:1.27-alpine
 
-WORKDIR /app
+# Remove default nginx content
+RUN rm -rf /usr/share/nginx/html/*
 
-COPY package.json package-lock.json ./
-RUN npm ci
+# Copy pre-built static assets
+COPY dist /usr/share/nginx/html
 
-COPY . .
+# nginx config: serve SPA with HTML5 history fallback
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-EXPOSE 5173
+EXPOSE 80
 
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+CMD ["nginx", "-g", "daemon off;"]
