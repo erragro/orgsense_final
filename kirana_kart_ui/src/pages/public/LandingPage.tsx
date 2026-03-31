@@ -9,14 +9,18 @@ import {
   BookOpen,
   ArrowRight,
   Zap,
+  Sun,
+  Moon,
 } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth.store'
+import { useUIStore } from '@/stores/ui.store'
 
 // ─── Navbar ────────────────────────────────────────────────────────────────
 
 function Navbar() {
   const [scrolled, setScrolled] = useState(false)
   const navigate = useNavigate()
+  const { theme, toggleTheme } = useUIStore()
 
   useEffect(() => {
     const handler = () => setScrolled(window.scrollY > 10)
@@ -27,7 +31,9 @@ function Navbar() {
   return (
     <nav
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-        scrolled ? 'bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800/60' : 'bg-transparent'
+        scrolled
+          ? 'bg-white/90 dark:bg-zinc-950/90 backdrop-blur-md border-b border-slate-200/60 dark:border-zinc-800/60'
+          : 'bg-transparent'
       }`}
     >
       <div className="mx-auto max-w-7xl px-6 py-4 flex items-center justify-between">
@@ -36,20 +42,27 @@ function Navbar() {
             <Zap className="w-4 h-4 text-white" />
           </div>
           <div>
-            <span className="text-white font-bold text-lg leading-none">Auralis</span>
-            <span className="block text-zinc-500 text-xs leading-none">orgsense.in</span>
+            <span className="text-slate-900 dark:text-white font-bold text-lg leading-none">Auralis</span>
+            <span className="block text-slate-400 dark:text-zinc-500 text-xs leading-none">orgsense.in</span>
           </div>
         </div>
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate('/team')}
-            className="text-zinc-400 hover:text-white text-sm transition-colors px-3 py-2"
+            className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white text-sm transition-colors px-3 py-2"
           >
             Meet the Team
           </button>
           <button
+            onClick={toggleTheme}
+            className="p-2 rounded-lg border border-slate-200 dark:border-zinc-700 text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white hover:border-slate-300 dark:hover:border-zinc-500 transition-all"
+            aria-label="Toggle theme"
+          >
+            {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </button>
+          <button
             onClick={() => navigate('/login')}
-            className="text-zinc-300 hover:text-white text-sm transition-colors px-4 py-2 rounded-lg border border-zinc-700 hover:border-zinc-500"
+            className="text-slate-600 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-white text-sm transition-colors px-4 py-2 rounded-lg border border-slate-300 dark:border-zinc-700 hover:border-slate-400 dark:hover:border-zinc-500"
           >
             Log In
           </button>
@@ -80,12 +93,12 @@ function CapabilityCard({
   accent: string
 }) {
   return (
-    <div className="group rounded-2xl bg-zinc-900 border border-zinc-800 p-6 hover:border-zinc-600 transition-all duration-300 hover:bg-zinc-900/80">
+    <div className="group rounded-2xl bg-slate-50 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 p-6 hover:border-slate-300 dark:hover:border-zinc-600 transition-all duration-300">
       <div className={`inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br ${accent} mb-4`}>
         <Icon className="w-5 h-5 text-white" />
       </div>
-      <h3 className="text-white font-semibold text-base mb-2">{title}</h3>
-      <p className="text-zinc-400 text-sm leading-relaxed">{description}</p>
+      <h3 className="text-slate-900 dark:text-white font-semibold text-base mb-2">{title}</h3>
+      <p className="text-slate-500 dark:text-zinc-400 text-sm leading-relaxed">{description}</p>
     </div>
   )
 }
@@ -94,17 +107,17 @@ function CapabilityCard({
 
 function TeaserAvatar({ initials, gradient }: { initials: string; gradient: string }) {
   return (
-    <div className="flex items-center gap-3 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3">
+    <div className="flex items-center gap-3 bg-slate-50 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl px-4 py-3">
       <div
         className={`w-10 h-10 rounded-full bg-gradient-to-br ${gradient} flex items-center justify-center text-white font-bold text-sm flex-shrink-0`}
       >
         {initials}
       </div>
       <div className="min-w-0">
-        <div className="text-white text-sm font-medium">
+        <div className="text-slate-900 dark:text-white text-sm font-medium">
           {initials === 'SC' ? 'Surajit Chaudhuri' : 'Renzil Rodrigues'}
         </div>
-        <div className="text-zinc-500 text-xs">
+        <div className="text-slate-400 dark:text-zinc-500 text-xs">
           {initials === 'SC' ? 'Chief Creator' : 'AI Full Stack Developer'}
         </div>
       </div>
@@ -168,31 +181,31 @@ export default function LandingPage() {
   ]
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white">
+    <div className="min-h-screen bg-white dark:bg-zinc-950 text-slate-900 dark:text-white">
       <Navbar />
 
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
       <section className="relative pt-32 pb-24 px-6 overflow-hidden">
         {/* Background glow */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[800px] h-[600px] rounded-full bg-blue-600/8 blur-3xl" />
-          <div className="absolute top-20 left-1/2 -translate-x-1/2 w-[400px] h-[400px] rounded-full bg-violet-600/6 blur-3xl" />
+          <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[800px] h-[600px] rounded-full bg-blue-600/8 dark:bg-blue-600/8 blur-3xl" />
+          <div className="absolute top-20 left-1/2 -translate-x-1/2 w-[400px] h-[400px] rounded-full bg-violet-600/6 dark:bg-violet-600/6 blur-3xl" />
         </div>
 
         <div className="relative mx-auto max-w-4xl text-center">
-          <div className="inline-flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-900/60 px-4 py-1.5 text-xs text-zinc-400 mb-8">
+          <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 dark:border-zinc-800 bg-slate-50/60 dark:bg-zinc-900/60 px-4 py-1.5 text-xs text-slate-500 dark:text-zinc-400 mb-8">
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             Live at orgsense.in
           </div>
 
-          <h1 className="text-5xl md:text-6xl font-bold leading-tight tracking-tight mb-6">
+          <h1 className="text-5xl md:text-6xl font-bold leading-tight tracking-tight mb-6 text-slate-900 dark:text-white">
             The Operating System for{' '}
-            <span className="bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-blue-500 to-violet-500 bg-clip-text text-transparent">
               Customer Experience Teams
             </span>
           </h1>
 
-          <p className="text-zinc-400 text-lg md:text-xl max-w-2xl mx-auto mb-10 leading-relaxed">
+          <p className="text-slate-500 dark:text-zinc-400 text-lg md:text-xl max-w-2xl mx-auto mb-10 leading-relaxed">
             From raw complaint to resolved ticket — Cardinal automates the decision layer
             your ops team relies on.
           </p>
@@ -200,20 +213,20 @@ export default function LandingPage() {
           <div className="flex items-center justify-center gap-4 flex-wrap">
             <button
               onClick={() => navigate('/signup')}
-              className="flex items-center gap-2 px-8 py-3.5 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white font-semibold text-sm transition-all shadow-lg shadow-blue-900/30"
+              className="flex items-center gap-2 px-8 py-3.5 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white font-semibold text-sm transition-all shadow-lg shadow-blue-900/20 dark:shadow-blue-900/30"
             >
               Get Started <ArrowRight className="w-4 h-4" />
             </button>
             <button
               onClick={() => navigate('/login')}
-              className="px-8 py-3.5 rounded-xl border border-zinc-700 hover:border-zinc-500 text-zinc-300 hover:text-white font-medium text-sm transition-all"
+              className="px-8 py-3.5 rounded-xl border border-slate-300 dark:border-zinc-700 hover:border-slate-400 dark:hover:border-zinc-500 text-slate-600 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-white font-medium text-sm transition-all"
             >
               Log In
             </button>
           </div>
 
           {/* Tagline pill */}
-          <div className="mt-12 inline-flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-900/50 px-5 py-2 text-sm text-zinc-400">
+          <div className="mt-12 inline-flex items-center gap-2 rounded-full border border-slate-200 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/50 px-5 py-2 text-sm text-slate-500 dark:text-zinc-400">
             AI-powered · End-to-end CX automation · Built at Swiggy scale
           </div>
         </div>
@@ -223,10 +236,10 @@ export default function LandingPage() {
       <section className="py-24 px-6">
         <div className="mx-auto max-w-7xl">
           <div className="text-center mb-14">
-            <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
+            <h2 className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-4">
               Platform Capabilities
             </h2>
-            <p className="text-zinc-400 text-base max-w-xl mx-auto">
+            <p className="text-slate-500 dark:text-zinc-400 text-base max-w-xl mx-auto">
               Six integrated modules, one decision engine. Each layer feeds the next.
             </p>
           </div>
@@ -239,16 +252,16 @@ export default function LandingPage() {
       </section>
 
       {/* ── Built for the problem ──────────────────────────────────────────── */}
-      <section className="py-24 px-6 border-t border-zinc-900">
+      <section className="py-24 px-6 border-t border-slate-100 dark:border-zinc-900">
         <div className="mx-auto max-w-6xl grid md:grid-cols-2 gap-16 items-center">
           <div>
-            <div className="text-xs font-semibold text-zinc-500 uppercase tracking-widest mb-4">
+            <div className="text-xs font-semibold text-slate-400 dark:text-zinc-500 uppercase tracking-widest mb-4">
               The Problem
             </div>
-            <h2 className="text-3xl font-bold text-white mb-6 leading-tight">
+            <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-6 leading-tight">
               Scaling CX operations without automation creates compounding complexity
             </h2>
-            <ul className="space-y-3 text-zinc-400 text-sm">
+            <ul className="space-y-3 text-slate-500 dark:text-zinc-400 text-sm">
               {[
                 'Agents making inconsistent decisions on identical complaints',
                 'No audit trail — quality scoring is manual and sampled',
@@ -264,13 +277,13 @@ export default function LandingPage() {
             </ul>
           </div>
           <div>
-            <div className="text-xs font-semibold text-zinc-500 uppercase tracking-widest mb-4">
+            <div className="text-xs font-semibold text-slate-400 dark:text-zinc-500 uppercase tracking-widest mb-4">
               The Solution
             </div>
-            <h2 className="text-3xl font-bold text-white mb-6 leading-tight">
+            <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-6 leading-tight">
               Auralis replaces judgment calls with a decision engine
             </h2>
-            <ul className="space-y-3 text-zinc-400 text-sm">
+            <ul className="space-y-3 text-slate-500 dark:text-zinc-400 text-sm">
               {[
                 'Cardinal routes every ticket through 5 deterministic phases',
                 'QA Agent scores 100% of interactions — no sampling',
@@ -289,12 +302,12 @@ export default function LandingPage() {
       </section>
 
       {/* ── Team teaser ───────────────────────────────────────────────────── */}
-      <section className="py-24 px-6 border-t border-zinc-900">
+      <section className="py-24 px-6 border-t border-slate-100 dark:border-zinc-900">
         <div className="mx-auto max-w-3xl text-center">
-          <h2 className="text-3xl font-bold text-white mb-4">
+          <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-4">
             Built by practitioners who've run operations at scale
           </h2>
-          <p className="text-zinc-400 text-base mb-10 max-w-xl mx-auto">
+          <p className="text-slate-500 dark:text-zinc-400 text-base mb-10 max-w-xl mx-auto">
             The team behind Auralis spent years inside CX operations at Swiggy before building
             the platform they wished existed.
           </p>
@@ -304,7 +317,7 @@ export default function LandingPage() {
           </div>
           <button
             onClick={() => navigate('/team')}
-            className="inline-flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm font-medium transition-colors"
+            className="inline-flex items-center gap-2 text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 text-sm font-medium transition-colors"
           >
             Meet the Team <ArrowRight className="w-4 h-4" />
           </button>
@@ -312,12 +325,12 @@ export default function LandingPage() {
       </section>
 
       {/* ── Footer CTA ────────────────────────────────────────────────────── */}
-      <section className="py-24 px-6 border-t border-zinc-900">
+      <section className="py-24 px-6 border-t border-slate-100 dark:border-zinc-900">
         <div className="mx-auto max-w-3xl text-center">
-          <h2 className="text-4xl font-bold text-white mb-4">
+          <h2 className="text-4xl font-bold text-slate-900 dark:text-white mb-4">
             Ready to transform your CX operations?
           </h2>
-          <p className="text-zinc-400 text-base mb-10">
+          <p className="text-slate-500 dark:text-zinc-400 text-base mb-10">
             Join teams already using Auralis to automate decisions at scale.
           </p>
           <div className="flex items-center justify-center gap-4 flex-wrap">
@@ -329,7 +342,7 @@ export default function LandingPage() {
             </button>
             <button
               onClick={() => navigate('/login')}
-              className="px-8 py-3.5 rounded-xl border border-zinc-700 hover:border-zinc-500 text-zinc-300 hover:text-white font-medium text-sm transition-all"
+              className="px-8 py-3.5 rounded-xl border border-slate-300 dark:border-zinc-700 hover:border-slate-400 dark:hover:border-zinc-500 text-slate-600 dark:text-zinc-300 hover:text-slate-900 dark:hover:text-white font-medium text-sm transition-all"
             >
               Log In
             </button>
@@ -338,15 +351,15 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-zinc-900 py-8 px-6">
+      <footer className="border-t border-slate-100 dark:border-zinc-900 py-8 px-6">
         <div className="mx-auto max-w-7xl flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2 text-zinc-500 text-sm">
+          <div className="flex items-center gap-2 text-slate-400 dark:text-zinc-500 text-sm">
             <div className="flex items-center justify-center w-5 h-5 rounded bg-gradient-to-br from-blue-600 to-violet-600">
               <Zap className="w-3 h-3 text-white" />
             </div>
             Auralis · orgsense.in
           </div>
-          <div className="text-zinc-600 text-sm">© 2026 Auralis. All rights reserved.</div>
+          <div className="text-slate-300 dark:text-zinc-600 text-sm">© 2026 Auralis. All rights reserved.</div>
         </div>
       </footer>
     </div>
