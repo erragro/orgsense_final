@@ -10,8 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy import text
@@ -152,7 +151,7 @@ configure_logging()
 # RATE LIMITER
 # ============================================================
 
-limiter = Limiter(key_func=get_remote_address, storage_uri=settings.redis_url)
+from app.admin.rate_limiter import limiter  # noqa: E402 — after configure_logging()
 
 
 # ============================================================

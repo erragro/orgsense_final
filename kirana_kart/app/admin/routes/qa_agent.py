@@ -19,7 +19,8 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from app.admin.rate_limiter import limiter
 from fastapi.responses import StreamingResponse
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
@@ -384,7 +385,9 @@ def search_tickets(
 # ============================================================
 
 @router.post("/evaluate")
+@limiter.limit("20/minute")
 async def evaluate_stream(
+    request: Request,
     body: EvaluateRequest,
     user: UserContext = Depends(_view),
 ):

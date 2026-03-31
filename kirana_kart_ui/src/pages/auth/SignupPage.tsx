@@ -64,8 +64,8 @@ export default function SignupPage() {
           <div className="w-14 h-14 rounded-xl bg-brand-600 flex items-center justify-center mb-4 shadow-lg shadow-brand-600/20">
             <span className="text-white text-2xl font-bold">KK</span>
           </div>
-          <h1 className="text-2xl font-bold text-foreground">Kirana Kart</h1>
-          <p className="text-muted text-sm mt-1">Governance Console</p>
+          <h1 className="text-2xl font-bold text-foreground">Auralis</h1>
+          <p className="text-muted text-sm mt-1">CX Operations Platform</p>
         </div>
 
         {/* Sign-up card */}
@@ -122,7 +122,7 @@ export default function SignupPage() {
                 className="mt-1 h-4 w-4 rounded border-surface-border accent-brand-600 cursor-pointer"
               />
               <label htmlFor="consent" className="text-xs text-muted leading-relaxed cursor-pointer">
-                I consent to Kirana Kart processing my personal data for account management and
+                I consent to Auralis processing my personal data for account management and
                 service delivery as described in the{' '}
                 <Link to="/privacy" className="text-brand-400 hover:text-brand-300 underline" target="_blank">
                   Privacy Policy
@@ -157,7 +157,7 @@ export default function SignupPage() {
         </div>
 
         <p className="text-center text-xs text-subtle mt-6">
-          Kirana Kart · Policy Governance Engine
+          Auralis · CX Operations Platform
         </p>
       </div>
     </div>

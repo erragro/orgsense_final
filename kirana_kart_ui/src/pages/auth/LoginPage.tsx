@@ -58,8 +58,8 @@ export default function LoginPage() {
           <div className="w-14 h-14 rounded-xl bg-brand-600 flex items-center justify-center mb-4 shadow-lg shadow-brand-600/20">
             <span className="text-white text-2xl font-bold">KK</span>
           </div>
-          <h1 className="text-2xl font-bold text-foreground">Kirana Kart</h1>
-          <p className="text-muted text-sm mt-1">Governance Console</p>
+          <h1 className="text-2xl font-bold text-foreground">Auralis</h1>
+          <p className="text-muted text-sm mt-1">CX Operations Platform</p>
         </div>
 
         {/* Login card */}
@@ -159,7 +159,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-subtle mt-6">
-          Kirana Kart · Policy Governance Engine
+          Auralis · CX Operations Platform
         </p>
       </div>
     </div>

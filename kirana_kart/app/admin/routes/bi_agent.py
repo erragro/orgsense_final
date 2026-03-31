@@ -18,8 +18,9 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from app.admin.rate_limiter import limiter
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
@@ -251,7 +252,9 @@ def get_messages(
 # ============================================================
 
 @router.post("/query")
+@limiter.limit("30/minute")
 async def query_stream(
+    request: Request,
     body: QueryRequest,
     user: UserContext = Depends(_view),
 ):

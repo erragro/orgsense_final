@@ -107,8 +107,8 @@ export function Sidebar() {
         </div>
         {!sidebarCollapsed && (
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-foreground truncate">Kirana Kart</p>
-            <p className="text-xs text-subtle truncate">Governance Console</p>
+            <p className="text-sm font-semibold text-foreground truncate">Auralis</p>
+            <p className="text-xs text-subtle truncate">CX Operations Platform</p>
           </div>
         )}
       </div>

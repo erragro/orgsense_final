@@ -42,7 +42,7 @@ export function TopBar({ systemHealthStatus }: TopBarProps) {
   return (
     <header className="h-14 border-b border-surface-border bg-surface/80 backdrop-blur flex items-center justify-between px-4 sticky top-0 z-20">
       <nav className="flex items-center gap-2 text-sm">
-        <span className="text-subtle">Kirana Kart</span>
+        <span className="text-subtle">Auralis</span>
         <span className="text-subtle opacity-60">/</span>
         <span className="text-foreground font-medium capitalize">{breadcrumb}</span>
         {segments[1] && (

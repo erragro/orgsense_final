@@ -62,6 +62,7 @@ from app.admin.services.oauth_service import (
     get_microsoft_oauth_url,
 )
 from app.admin.redis_client import get_redis as get_redis_client
+from app.admin.rate_limiter import limiter
 from app.config import settings
 
 logger = logging.getLogger("kirana_kart.auth_routes")
@@ -254,6 +255,7 @@ def _token_response(user: UserContext, refresh_raw: str, response: Response) -> 
 
 
 @router.post("/signup")
+@limiter.limit("5/minute")
 def signup(payload: SignupRequest, request: Request, response: Response):
     """Register a new user. Grants view-only access on all modules."""
     if not payload.consent_given:
@@ -309,7 +311,8 @@ def signup(payload: SignupRequest, request: Request, response: Response):
 
 
 @router.post("/login")
-def login(payload: LoginRequest, response: Response):
+@limiter.limit("10/minute")
+def login(payload: LoginRequest, request: Request, response: Response):
     """Authenticate with email + password."""
     _check_lockout(payload.email)
 

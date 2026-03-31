@@ -1,28 +1,31 @@
-# Kirana Kart — AI Policy Governance & CRM Platform
+# Auralis — CX Operations Platform
 
-**Version:** 5.1.0
-**Stack:** FastAPI · React 19 · PostgreSQL · Weaviate · Redis · Celery · OpenAI · Docker · OpenTelemetry · Jaeger · Prometheus · Grafana
+**Version:** 6.0.0
+**Live at:** [orgsense.in](https://orgsense.in)
+**Stack:** FastAPI · React 19 · PostgreSQL · Weaviate · Redis · Celery · OpenAI · Docker · GKE
 
 ---
 
 ## What Is This?
 
-Kirana Kart is a **full-stack AI-powered policy governance, automated ticket-resolution, and CRM platform** for e-commerce / quick-commerce customer support.
+Auralis is a **full-stack AI-powered customer experience operations platform** built for teams that manage high-volume support at scale.
 
-It manages the complete lifecycle of business rules — from human-authored knowledge base documents through multi-model LLM compilation, vectorized policy versions, automated 4-stage Cardinal pipeline evaluation, and a CRM UI for human-in-the-loop (HITL) ticket resolution.
+It covers the complete ticket lifecycle — from raw inbound complaint through automated decision, routing, quality scoring, and resolution — replacing tribal knowledge and manual judgment with deterministic pipelines and LLM-assisted intelligence.
 
-**Scale:** ~2.2M support chats/month · 18M orders/month · ₹12.4 Crore/month refund leakage governed by versioned, auditable AI policies.
+Built by practitioners who ran CX operations at Swiggy before building the platform they wished existed.
 
 ---
 
-## Business Case Coverage
+## Platform Modules
 
-| # | Problem | Coverage | Key Components |
-|---|---|---|---|
-| **P1** | Refund fraud & policy leakage — ₹12.4 Cr/month | **~78%** | 4-stage Cardinal pipeline, deterministic rule engine, Weaviate vector retrieval, fraud signal computation, GPS enrichment, tier auto-approve |
-| **P2** | Agent quality invisible — 0.2% QA coverage | **~35%** | QA Agent (AI pipeline accuracy + 12 Python + 10 LLM checks), canned-response detector, grammar scorer, sentiment arc, per-agent daily scoring |
-| **P3** | Ticket spike root-cause unknown — 3-day lag | **~35%** | BI Agent (reactive SQL), intent classifier, HDBSCAN spike detection, spike report analytics |
-| **P4** | True FCR overstated by 20 points | **~45%** | Intent classifier, 48h async FCR checker Celery task, FCR analytics tab |
+| Module | Description |
+|---|---|
+| **Cardinal Pipeline** | 5-phase ingestion → decision engine. Validates, deduplicates, enriches, classifies, and routes every ticket with zero manual input. |
+| **L2 Validator** | Smart deduplication and rule-based conflict detection. Catches routing conflicts before they reach agents. |
+| **BI Agent** | Ask your operations data in plain English. Generates SQL, returns charts and insights — no data team required. |
+| **QA Agent** | 10-parameter automated quality scoring across every agent interaction. Audit at scale, not by sampling. |
+| **CRM & Ticket Ops** | Full ticket lifecycle — SLA tracking, automation rules, CSAT, escalation paths, merge flows, team dashboards. |
+| **Knowledge Base** | Versioned SOP management with RAG-powered search. Policy-as-code with simulation before rollout. |
 
 ---
 
@@ -30,7 +33,7 @@ It manages the complete lifecycle of business rules — from human-authored know
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        React UI  :5173                              │
+│                     React UI  (orgsense.in)                         │
 │   JWT auth · per-module RBAC · OAuth (GitHub / Google / Microsoft)  │
 └──────────────────────┬──────────────────────────────────────────────┘
                        │  REST / Axios + Authorization: Bearer <token>
@@ -41,564 +44,178 @@ It manages the complete lifecycle of business rules — from human-authored know
 │     :8001        │                │       :8000          │
 │                  │                │                      │
 │ /auth/*          │                │ POST /ingest         │
-│ /users/*         │                │ (L1 5-phase pipeline)│
+│ /users/*         │                │ (5-phase pipeline)   │
 │ /crm/*           │                └──────────┬───────────┘
 │ /kb/*            │                           │ Redis Streams
-│ /compiler/*      │                           ▼
-│ /simulation/*    │                ┌──────────────────────┐
-│ /analytics/*     │                │    worker-poll       │
-└──────────────────┘                │    worker-celery     │
-         │                          │  (4-stage Cardinal)  │
-         ▼                          └──────────┬───────────┘
-┌──────────────────┐                           │
-│   PostgreSQL     │◄──────────────────────────┘
-│   :5432          │
-│  kirana_kart.*   │
-└──────────────────┘
-         │
-┌──────────────────┐    ┌──────────────────┐
-│    Weaviate      │    │      Redis       │
-│    :8080         │    │      :6379       │
-│ (vector search)  │    │ (streams/cache)  │
-└──────────────────┘    └──────────────────┘
+│ /bi-agent/*      │                           ▼
+│ /qa-agent/*      │                ┌──────────────────────┐
+│ /cardinal/*      │                │    worker-poll       │
+│ /analytics/*     │                │    worker-celery     │
+└──────────────────┘                └──────────┬───────────┘
+                                               ▼
+                              ┌──────────────────────────────┐
+                              │  PostgreSQL · Weaviate · Redis│
+                              └──────────────────────────────┘
 ```
 
 ---
 
-## Docker Containers
+## Access Control
 
-### Application (8)
+Auralis uses per-module RBAC with explicit admin grant required for sensitive modules.
 
-| Container | Port | Role |
+| Module | New User Default | Notes |
 |---|---|---|
-| `governance` | 8001 | FastAPI — admin, CRM, policy, analytics |
-| `ingest` | 8000 | FastAPI — ticket ingestion (5-phase pipeline) |
-| `postgres` | 5432 | PostgreSQL 14 — primary data store |
-| `redis` | 6379 | Redis 7 — streams + Celery broker |
-| `weaviate` | 8080 | Vector DB — rule candidates + issue taxonomy |
-| `worker-poll` | — | Stream poll loop (dispatches to Celery) |
-| `worker-celery` | — | Celery worker (4-stage Cardinal pipeline) |
-| `ui` | 5173 | React 19 + Vite — frontend |
+| Dashboard, Tickets, Sandbox | `view` | Granted on signup |
+| Taxonomy, Knowledge Base, Policy | `view` | Granted on signup |
+| Customers, Analytics | `view` | Granted on signup |
+| **Cardinal** | ❌ none | Admin must grant |
+| **BI Agent** | ❌ none | Admin must grant |
+| **QA Agent** | ❌ none | Admin must grant |
+| **CRM** | ❌ none | Admin must grant |
+| System, Users | ❌ none | `is_super_admin` only |
 
-### Observability (4)
-
-| Container | Port | Role |
-|---|---|---|
-| `otel-collector` | 4317 (gRPC) · 4318 (HTTP) | Receives OTLP spans from all services, forwards to Jaeger |
-| `jaeger` | 16686 | Distributed trace visualization UI |
-| `prometheus` | 9090 | Scrapes `/metrics` from governance + ingest every 15s |
-| `grafana` | 3001 | Dashboards pre-wired with Prometheus + Jaeger datasources |
+Super admin bootstrap: `admin@kirana.local` / `REDACTED` (change on first login).
 
 ---
 
-## Observability
+## Rate Limiting
 
-Production-grade distributed tracing, metrics, and log correlation across all 4 application services.
+Two-layer protection against brute force and DDoS:
 
-### Distributed Tracing — OpenTelemetry + Jaeger
+**nginx Ingress (network layer):**
+- 20 req/s per IP with burst of 60 — returns HTTP 429 beyond limit
+- Max 10 concurrent connections per IP
 
-Every service ships spans to the OTel Collector over OTLP gRPC, which forwards them to Jaeger.
+**slowapi (application layer, per-endpoint per-IP via Redis):**
 
-**Auto-instrumented layers (all services):**
-- **FastAPI** — every HTTP route: method, path, status, duration
-- **SQLAlchemy** — every query and connection pool event
-- **Redis** — every command (streams, cache, Celery broker)
-- **httpx** — outbound LLM API calls (OpenAI) traced end-to-end
-- **Celery** — task enqueue + execute linked as parent/child spans
-
-**Manual spans (Cardinal 4-stage pipeline):**
-
-| Span | Key Attributes |
+| Endpoint | Limit |
 |---|---|
-| `cardinal.process_ticket` | `ticket.id`, `stream.name`, `ticket.module`, `ticket.priority` |
-| `cardinal.stage0.classification` | `stage.model`, `stage.issue_type_l1`, `stage.confidence` |
-| `cardinal.stage1.evaluation` | `stage.model`, `stage.action_code`, `stage.fraud_segment`, `stage.greedy` |
-| `cardinal.stage2.validation` | `stage.model`, `stage.final_action`, `stage.pathway`, `stage.validation` |
-| `cardinal.stage3.response_generation` | `stage.model` (HITL only) |
-
-Exceptions are captured with `span.record_exception()` and `StatusCode.ERROR`.
-
-**Log correlation:** every log line emits `trace_id` and `span_id` so you can jump from a log in stdout directly to the corresponding Jaeger trace.
-
-**Sampling:** configurable via `OTEL_SAMPLE_RATE` (default `1.0` in dev — lower for prod, e.g. `0.1`).
-
-### Metrics — Prometheus + Grafana
-
-Prometheus scrapes `/metrics` from `governance:8001` and `ingest:8000` every 15s.
-
-Key metrics exposed:
-
-| Metric | Labels | Description |
-|---|---|---|
-| `kirana_kart_ingest_requests_total` | org, module, source, status | Ingest pipeline request count |
-| `kirana_kart_pipeline_duration_seconds` | module, priority | End-to-end Cardinal pipeline latency |
-| `kirana_kart_pipeline_phase_errors_total` | phase, error_code | Per-phase pipeline failures |
-| `kirana_kart_worker_tasks_total` | stream, status | Celery tasks processed |
-| `kirana_kart_worker_task_duration_seconds` | stream | LLM pipeline task latency |
-| `kirana_kart_worker_llm_calls_total` | stage, model, status | LLM API call count per stage |
-| `kirana_kart_vector_jobs_total` | status | KB vectorization jobs |
-| `kirana_kart_db_pool_checked_out` | — | SQLAlchemy pool checkout depth |
-| `kirana_kart_redis_operation_errors_total` | operation | Redis error count |
-
-Grafana at `:3001` is pre-provisioned with Prometheus and Jaeger datasources. Add dashboards as needed.
-
-### Observability Config Files
-
-```
-observability/
-├── otel-collector-config.yaml   # OTLP receiver → batch processor → Jaeger exporter
-├── prometheus.yml               # Scrape targets: governance, ingest, otel-collector
-└── grafana/
-    └── provisioning/
-        ├── datasources/         # Prometheus + Jaeger auto-provisioned
-        └── dashboards/          # Dashboard provider config
-```
+| `POST /auth/login` | 10/minute |
+| `POST /auth/signup` | 5/minute |
+| `POST /bi-agent/query` | 30/minute |
+| `POST /qa-agent/evaluate` | 20/minute |
 
 ---
 
-## Quick Start
+## Public Pages
+
+The platform has a public marketing surface before the auth wall:
+
+| Route | Page |
+|---|---|
+| `/` | Landing page — platform overview, capabilities, problem/solution |
+| `/team` | Team portfolio — founder profiles and background |
+| `/login` | Sign in (email/password + GitHub/Google/Microsoft OAuth) |
+| `/signup` | Create account (DPDP Act §6 consent required) |
+
+Authenticated users visiting `/` are automatically redirected to `/dashboard`.
+
+---
+
+## Local Development
 
 ### Prerequisites
-- Docker + Docker Compose
-- OpenAI API key
+- Docker Desktop
+- Node.js 20+
+- Python 3.12
 
-### 1. Clone & configure
-```bash
-git clone <repo-url>
-cd kirana_kart_final
-cp .env.example .env
-# Fill in DB_HOST, DB_PASSWORD, OPENAI_API_KEY, JWT_SECRET_KEY, etc.
-```
+### Start everything
 
-### 2. Start all services
 ```bash
 docker compose up -d
 ```
 
-### 3. Access
-| Service | URL |
-|---|---|
-| Frontend | http://localhost:5173 |
-| Governance API docs | http://localhost:8001/docs |
-| Ingest API docs | http://localhost:8000/docs |
-| Jaeger (traces) | http://localhost:16686 |
-| Prometheus | http://localhost:9090 |
-| Grafana | http://localhost:3001 (admin / REDACTED) |
+Services:
+- UI: http://localhost:5173
+- Governance API: http://localhost:8001
+- Ingest API: http://localhost:8000
+- Weaviate: http://localhost:8080
 
-### 4. Default admin
-```
-Email:    admin@kirana.local
-Password: REDACTED
+### Frontend only
+
+```bash
+cd kirana_kart_ui
+npm install
+npm run dev
 ```
 
----
+### Backend only
 
-## Authentication & RBAC
-
-- **JWT** (python-jose) + **bcrypt** passwords (passlib, pinned `<4.0.0`)
-- 60-minute access tokens + 30-day refresh tokens with rotation
-- OAuth: GitHub, Google, Microsoft
-- Per-module permissions: `{view, edit, admin}` booleans
-- `is_super_admin` flag bypasses all checks
-
-### Modules & Roles
-
-| Module | Description | Default access |
-|---|---|---|
-| `dashboard` | Overview & stats | view |
-| `tickets` | Ticket list & pipeline status | view |
-| `crm` | HITL queue, agent dashboard, reports | edit (agents), admin (supervisors) |
-| `knowledgeBase` | KB upload, compiler, vectorize | edit |
-| `policy` | Version management, simulation, shadow | edit/admin |
-| `customers` | Customer 360° profiles | view |
-| `analytics` | FCR, spike, agent quality | view |
-| `biAgent` | BI chat agent | edit |
-| `qaAgent` | QA evaluation agent | admin |
-| `system` | System config, beat schedule | admin |
-| `sandbox` | Dev sandbox | admin |
-
----
-
-## The Cardinal Pipeline (4 Stages)
-
-Every ticket that enters the HITL/MANUAL_REVIEW pathway passes through all 4 stages:
-
-```
-Stage 0 — Classification         gpt-4o-mini
-  ↓  issue_type_l1, issue_type_l2, confidence
-
-Stage 1 — LLM Evaluation         gpt-4.1 + Weaviate rule candidates
-  ↓  action_code, refund amount, fraud segment, greedy classification
-
-Stage 2 — Deterministic Validation   pure Python (no LLM)
-  ↓  final_action_code, automation_pathway (AUTO_RESOLVED | HITL | MANUAL_REVIEW)
-
-Stage 3 — HITL Response Draft    pure Python (HITL cases only)
-  ↓  response_draft, hitl_queue assignment
-```
-
-Stage 2 is 100% deterministic — it reads `master_action_codes` flags (`requires_escalation`, `automation_eligible`, `requires_refund`) and applies strict routing logic regardless of LLM output.
-
----
-
-## CRM System (Freshdesk-equivalent)
-
-A full production-grade internal CRM built on top of the pipeline HITL output.
-
-### Features
-- **Ticket queue** with filters (queue type, status, priority, SLA breach, tags, agent)
-- **Work view** — split-pane: conversation thread + notes + AI recommendation + action panel
-- **Status lifecycle**: Open → In Progress → Pending Customer → Escalated → Resolved → Closed
-- **SLA tracking** — resolution SLA + first-response SLA, breach detection, countdown timers
-- **AI Recommendation panel** — action code, refund amount, confidence, fraud segment, reasoning
-- **Approve / Reject / Modify** AI recommendation with reason capture
-- **Internal notes** + customer reply composition
-- **Canned responses** from `response_templates` table
-- **Customer 360°** — order history, refund history, CSAT, tier, churn probability
-- **Audit timeline** — immutable log of every action taken on a ticket
-- **Bulk actions** — assign, escalate, close, status change
-- **Ticket merge** with audit trail
-- **Tag management** + per-ticket tagging
-- **Ticket watchers** + in-app notifications
-- **Saved filter views** per agent
-- **Agent collision detection** (viewing lock)
-- **Agent personal dashboard** — volume, avg resolution time, CSAT, approval rate
-- **Admin supervisor dashboard** — queue health grid, SLA compliance, volume trend, aging buckets
-- **Reports** — volume by agent, SLA compliance, resolution time, action code distribution, refund analysis, first response
-
-### Queue Types & SLA Policy
-
-| Queue | Resolution SLA | First Response SLA |
-|---|---|---|
-| `ESCALATION_QUEUE` | 60 min | 15 min |
-| `SLA_BREACH_REVIEW` | 120 min | 20 min |
-| `SENIOR_REVIEW` | 240 min | 30 min |
-| `MANUAL_REVIEW` | 240 min | 30 min |
-| `STANDARD_REVIEW` | 480 min | 60 min |
-
-### CRM Database Tables
-- `kirana_kart.hitl_queue` — central work queue (9 indexes, SLA timestamps, AI snapshot)
-- `kirana_kart.crm_notes` — thread entries (internal / customer reply / escalation / system)
-- `kirana_kart.crm_agent_actions` — immutable audit log (25+ action types)
-- `kirana_kart.crm_tags` + `crm_ticket_tags` — tag system
-- `kirana_kart.crm_watchers` — ticket watchers
-- `kirana_kart.crm_notifications` — in-app notification system (12 event types)
-- `kirana_kart.crm_saved_views` — per-agent filter presets
-- `kirana_kart.crm_merge_log` — merge audit
-- `kirana_kart.users.crm_availability` — agent availability (ONLINE/BUSY/AWAY/OFFLINE)
-
----
-
-## Policy Simulation
-
-The Simulation tab in Policy Management lets you run a real ticket through the **full 4-stage Cardinal pipeline** for two policy versions side-by-side.
-
-### How It Works
-1. Select a real ticket from the `fdraw` table
-2. Choose a baseline and candidate policy version
-3. Click **Run Cardinal Simulation**
-4. Stage 0 runs once (classification is version-agnostic)
-5. Stages 1–3 run for each version with their respective Weaviate rule candidates
-6. Results show:
-   - Stage 0: issue classification + confidence
-   - Stage 1 comparison: LLM action code, fraud/greedy signals, confidence, reasoning
-   - Stage 2 comparison: final decision, automation pathway, discrepancy detection
-   - Stage 3 (if HITL): response draft + queue assignment
-   - Decision diff banner: changed action, pathway, refund amount
-
-### Endpoints
-```
-POST /simulation/run-ticket-cardinal   # full 4-stage Cardinal per version
-POST /simulation/run-ticket            # local rule-matching trace (lightweight)
-POST /simulation/run                   # batch simulation over sample_tickets table
-GET  /simulation/tickets               # ticket search for picker
-GET  /simulation/ticket/{id}           # single ticket detail
+```bash
+cd kirana_kart
+pip install -r requirements.txt
+uvicorn app.admin.main:app --reload --port 8001
 ```
 
 ---
 
-## Policy Document Lifecycle
+## Production Deployment (GKE)
 
-```
-1. Author KB document (Markdown)
-2. POST /kb/upload  →  stored in knowledge_base_raw_uploads
-3. POST /compiler/extract-actions
-      LLM pass extracts Action Code Registry
-      → upserts into master_action_codes (with flags)
-4. POST /compiler/compile-latest
-      LLM reads full document, maps rules → action_codes
-      → writes rows to rule_registry
-5. POST /vectorization/vectorize
-      Embeds rules into Weaviate (policy_rule_candidates collection)
-6. POST /kb/publish  →  updates kb_runtime_config.active_version
-```
+Live at **orgsense.in** — GKE Autopilot cluster, `auralis` namespace.
 
-> **Important:** Always run `extract-actions` before `compile-latest`. New action codes must exist in `master_action_codes` before the compiler can reference them — otherwise Stage 2 silently defaults to `automation_eligible=True`, auto-resolving tickets that should be escalated.
+### Build and push images
 
----
+```bash
+# UI
+cd kirana_kart_ui
+npm run build
+cd ..
+docker buildx build --platform linux/amd64 -t asia-south1-docker.pkg.dev/PROJECT_ID/auralis/ui:latest kirana_kart_ui/
+docker save asia-south1-docker.pkg.dev/PROJECT_ID/auralis/ui:latest | crane push - asia-south1-docker.pkg.dev/PROJECT_ID/auralis/ui:latest
 
-## Module Overview
-
-```
-kirana_kart/
-├── app/
-│   ├── admin/
-│   │   ├── main.py                    # FastAPI app, route registration, startup
-│   │   ├── routes/
-│   │   │   ├── auth_routes.py         # /auth/* — login, signup, refresh, OAuth
-│   │   │   ├── user_management.py     # /users/* — CRUD + permissions
-│   │   │   ├── crm_routes.py          # /crm/* — 30 CRM endpoints
-│   │   │   └── ...
-│   │   └── services/
-│   │       ├── auth_service.py        # JWT, bcrypt, UserContext, RBAC
-│   │       ├── crm_service.py         # Full CRM business logic
-│   │       └── oauth_service.py       # GitHub/Google/Microsoft OAuth
-│   │
-│   ├── l1_ingest/                     # 5-phase ingestion pipeline
-│   ├── l2_enrichment/                 # Order context, GPS, customer risk
-│   ├── l3_analytics/                  # FCR checker, spike detection, clustering
-│   ├── l4_agents/
-│   │   ├── worker.py                  # Celery task — orchestrates 4 stages
-│   │   └── ecommerce/
-│   │       ├── stage0_classifier.py   # gpt-4o-mini classification
-│   │       ├── stage1_evaluator.py    # gpt-4.1 + Weaviate evaluation
-│   │       ├── stage2_validator.py    # Deterministic routing (no LLM)
-│   │       └── stage3_responder.py    # HITL response draft (no LLM)
-│   └── l45_ml_platform/
-│       └── simulation/
-│           ├── policy_simulation_service.py   # Cardinal + rule-trace simulation
-│           └── routes.py                      # /simulation/* endpoints
-
-kirana_kart_ui/src/
-├── pages/
-│   ├── crm/                           # CRM queue, work view, dashboards, reports
-│   ├── policy/PolicyPage.tsx          # Versions + Cardinal Simulation + Shadow
-│   ├── analytics/                     # FCR, spike, agent quality tabs
-│   └── ...
-├── api/governance/
-│   ├── crm.api.ts                     # All CRM API calls
-│   ├── simulation.api.ts              # Simulation API calls
-│   └── ...
-└── types/crm.types.ts                 # Full CRM TypeScript interfaces
+# Governance API
+docker buildx build --platform linux/amd64 -t asia-south1-docker.pkg.dev/PROJECT_ID/auralis/governance:latest kirana_kart/
+docker save asia-south1-docker.pkg.dev/PROJECT_ID/auralis/governance:latest | crane push - asia-south1-docker.pkg.dev/PROJECT_ID/auralis/governance:latest
 ```
 
----
+### Deploy
 
-## Database Schema
-
-All tables live in the `kirana_kart` schema of the `orgintelligence` PostgreSQL database.
-
-### Core Pipeline Tables
-| Table | Purpose |
-|---|---|
-| `fdraw` | Raw tickets — subject, description, cx_email, module, canonical_payload |
-| `llm_output_1` | Stage 0 output — issue_type_l1/l2, confidence |
-| `llm_output_2` | Stage 1 output — action_code, fraud_segment, greedy_classification, refund calc |
-| `llm_output_3` | Stage 2 output — final_action_code, automation_pathway, policy_version |
-| `conversations` + `conversation_turns` | Full chat history per ticket |
-
-### Policy Tables
-| Table | Purpose |
-|---|---|
-| `knowledge_base_raw_uploads` | Raw KB markdown documents |
-| `kb_versions` | Compiled policy versions |
-| `kb_runtime_config` | Active policy version pointer |
-| `rule_registry` | Compiled rules per policy version |
-| `master_action_codes` | Action codes with routing flags |
-| `weaviate` (external) | Vector-embedded rule candidates |
-
-### CRM Tables
-| Table | Purpose |
-|---|---|
-| `hitl_queue` | Central HITL work queue |
-| `crm_notes` | Thread entries (internal / customer reply) |
-| `crm_agent_actions` | Immutable audit log |
-| `crm_tags` / `crm_ticket_tags` | Tag system |
-| `crm_watchers` | Ticket watchers |
-| `crm_notifications` | In-app notifications |
-| `crm_saved_views` | Per-agent filter presets |
-| `crm_merge_log` | Merge audit trail |
-
-### Supporting Tables
-| Table | Purpose |
-|---|---|
-| `users` + `user_permissions` | Auth + RBAC |
-| `orders` + `customers` | Order/customer context |
-| `refunds` | Refund history |
-| `response_templates` | Canned responses by action code |
-| `agent_quality_flags` | QA coaching flags |
-| `csat_responses` | Customer satisfaction scores |
-| `cardinal_beat_schedule` | Celery Beat task registry |
-
----
-
-## API Reference
-
-### Authentication
-```
-POST /auth/login          # Email + password → access + refresh tokens
-POST /auth/signup         # Create account
-POST /auth/refresh        # Rotate refresh token
-POST /auth/logout         # Invalidate refresh token
-GET  /auth/me             # Current user profile
-GET  /auth/github         # OAuth redirect
-GET  /auth/google         # OAuth redirect
-GET  /auth/microsoft      # OAuth redirect
+```bash
+kubectl rollout restart deployment/ui deployment/governance -n auralis
+kubectl apply -f k8s/ingress.yaml
 ```
 
-### CRM
-```
-GET    /crm/queue                      # Paginated queue with filters
-GET    /crm/queue/{id}                 # Full work-view detail
-POST   /crm/queue/{id}/action          # Take action (approve/reject/resolve/escalate/...)
-POST   /crm/queue/{id}/notes           # Add note
-POST   /crm/queue/{id}/assign          # Assign to agent
-POST   /crm/queue/{id}/self-assign     # Self-assign
-POST   /crm/queue/bulk-assign          # Bulk assign
-POST   /crm/queue/bulk-escalate        # Bulk escalate
-POST   /crm/queue/bulk-close           # Bulk close
-GET    /crm/dashboard/agent            # Agent personal dashboard
-GET    /crm/dashboard/admin            # Supervisor dashboard
-GET    /crm/reports                    # Analytics reports
-GET    /crm/agents                     # Agent list with availability
-GET    /crm/notifications              # In-app notifications
-```
+### Verify
 
-### Policy
-```
-GET    /simulation/tickets             # Real ticket search for simulation picker
-POST   /simulation/run-ticket-cardinal # Full 4-stage Cardinal simulation
-POST   /simulation/run-ticket          # Rule-trace simulation (lightweight)
-POST   /kb/upload                      # Upload KB document
-POST   /compiler/extract-actions       # Extract action codes from KB
-POST   /compiler/compile-latest        # Compile rules to rule_registry
-POST   /vectorization/vectorize        # Embed rules into Weaviate
-POST   /kb/publish                     # Publish policy version
+```bash
+curl -s -o /dev/null -w "%{http_code}" https://orgsense.in/login
+# → 200
+
+# Rate limit test — 11th+ request within a minute returns 429
+for i in $(seq 1 15); do curl -s -o /dev/null -w "%{http_code}\n" -X POST https://orgsense.in/api/governance/auth/login -H 'Content-Type: application/json' -d '{"email":"x","password":"x"}'; done
 ```
 
 ---
 
 ## Environment Variables
 
-```env
-# Database
-DB_HOST=postgres
-DB_PORT=5432
-DB_NAME=orgintelligence
-DB_USER=orguser
-DB_PASSWORD=your_password
-
-# Redis
-REDIS_URL=redis://redis:6379/0
-
-# Weaviate
-WEAVIATE_HOST=weaviate
-WEAVIATE_PORT=8080
-
-# OpenAI
-OPENAI_API_KEY=sk-...
-
-# JWT
-JWT_SECRET_KEY=your_secret_key_min_32_chars
-JWT_ALGORITHM=HS256
-
-# OAuth (optional)
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-MICROSOFT_CLIENT_ID=
-MICROSOFT_CLIENT_SECRET=
-
-# App
-FRONTEND_URL=http://localhost:5173
-
-# Observability
-OTLP_ENDPOINT=http://otel-collector:4317   # leave blank to disable trace export
-OTEL_SAMPLE_RATE=1.0                        # 0.0–1.0; lower in production (e.g. 0.1)
-PROMETHEUS_ENABLED=true
-SERVICE_NAME=kirana-kart-governance         # overridden per service in compose
-DEPLOYMENT_ENV=development                  # surfaced as span attribute
-```
-
----
-
-## Common Commands
-
-```bash
-# Start all services
-docker compose up -d
-
-# Rebuild after code changes
-docker compose up --build -d governance ui
-
-# View governance logs
-docker logs -f kirana_kart_final-governance-1
-
-# View Celery worker logs
-docker logs -f kirana_kart_final-worker-celery-1
-
-# Run a database migration / check tables
-docker exec -it kirana_kart_final-postgres-1 psql -U orguser -d orgintelligence
-
-# Stop all
-docker compose down
-
-# Stop and wipe volumes (full reset)
-docker compose down -v
-
-# Open Jaeger trace UI
-open http://localhost:16686
-
-# Open Grafana
-open http://localhost:3001   # admin / REDACTED
-
-# Check Prometheus targets
-curl http://localhost:9090/api/v1/targets | python3 -m json.tool
-```
-
----
-
-## Development Notes
-
-- **Rule matching fix (v4+):** `_fetch_rules` no longer filters by `module` — ticket module labels ("delivery") don't match `rule_registry.module_name` values ("Fraud & Abuse Intelligence"). All rules for the active policy version are fetched; the LLM + Weaviate determine applicability.
-- **Stage 2 is deterministic:** `stage2_validator.py` makes zero LLM calls. It reads `master_action_codes.requires_escalation`, `automation_eligible`, `requires_refund` to route tickets. New action codes MUST be extracted via `/compiler/extract-actions` before compiling, or Stage 2 silently auto-resolves escalation-required tickets.
-- **CRM enqueue is non-fatal:** The worker wraps CRM enqueue in try/except — a CRM failure never blocks pipeline completion.
-- **Cardinal Simulation writes nothing to DB:** `simulate_ticket_cardinal()` calls stage `.run()` functions directly, bypassing the `_run_stage_*` DB-write wrappers in `worker.py`.
-- **bcrypt pinned:** `bcrypt<4.0.0` required for passlib 1.7.x compatibility.
-- **JWT key:** `kk_auth` localStorage key (not the old `kk_admin_token`).
-
----
-
-## Troubleshooting
-
-| Symptom | Cause | Fix |
+| Variable | Service | Description |
 |---|---|---|
-| Simulation returns "No rules found" | Policy version has no compiled rules | Upload KB → extract-actions → compile → vectorize |
-| Stage 2 auto-resolves escalation cases | Action code missing from `master_action_codes` | Run `/compiler/extract-actions` before compile |
-| CRM queue empty | Worker not running or pipeline not completing | Check `docker logs worker-celery-1` |
-| Weaviate returns empty rule candidates | Rules not vectorized for that policy version | Run `/vectorization/vectorize` |
-| Auth token expired | Access token TTL is 60 minutes | Frontend auto-refreshes via interceptor |
+| `VITE_GOVERNANCE_API_URL` | UI | Governance API base URL (prod: `/api/governance`) |
+| `OPENAI_API_KEY` | governance | OpenAI key for BI/QA agents |
+| `DATABASE_URL` | governance | PostgreSQL connection string |
+| `REDIS_URL` | governance | Redis connection string |
+| `WEAVIATE_URL` | governance | Weaviate endpoint |
+| `JWT_SECRET` | governance | JWT signing secret (change in production) |
+| `GITHUB_CLIENT_ID/SECRET` | governance | GitHub OAuth app credentials |
+| `GOOGLE_CLIENT_ID/SECRET` | governance | Google OAuth credentials |
+| `MICROSOFT_CLIENT_ID/SECRET` | governance | Microsoft OAuth credentials |
 
 ---
 
-## Production Checklist
+## Team
 
-- [ ] Change `admin@kirana.local` bootstrap password
-- [ ] Set strong `JWT_SECRET_KEY` (32+ random bytes)
-- [ ] Set strong `DB_PASSWORD`
-- [ ] Configure OAuth client IDs/secrets
-- [ ] Set `FRONTEND_URL` to production domain
-- [ ] Enable HTTPS (reverse proxy / load balancer)
-- [ ] Set up PostgreSQL backups
-- [ ] Configure Celery Beat for `crm-auto-escalate-15m` task
-- [ ] Monitor Weaviate memory (default 1Gi limit in compose)
-- [ ] Rotate JWT secret on suspected compromise
-- [ ] Set `OTEL_SAMPLE_RATE` to 0.05–0.1 in production (100% tracing is too expensive at scale)
-- [ ] Replace in-process Jaeger with a production-grade backend (Grafana Tempo, Honeycomb, Datadog)
-- [ ] Change Grafana `admin` password (`GF_SECURITY_ADMIN_PASSWORD`)
-- [ ] Set `DEPLOYMENT_ENV=production` in all services
+**Surajit Chaudhuri** — Chief Creator
+AI Solutions Architect · AI Product Manager · Full Stack
+7+ years at Swiggy engineering operational decision systems. Architect of Iris (replaced Observe.AI, ~₹5Cr cost reduction) and Resolute (8K+ users, 50% AHT reduction, ₹2.4Cr operational savings).
+
+**Renzil Rodrigues** — AI Full Stack Developer
+Technical Architect · Process Automation · AI & Content Strategist
+Process automation architect at Swiggy. Built AI/NLP escalation-prevention models saving ₹7Cr annually in refund leakage, eliminated 20K+ manual hours, engineered deduplication systems processing 1.5L+ tickets (98% original noise eliminated).
 
 ---
 
-*All company names, persons, financial figures, and business metrics in this project are entirely fictional and for demonstration purposes only.*
+## License
+
+Proprietary. All rights reserved. © 2026 Auralis.

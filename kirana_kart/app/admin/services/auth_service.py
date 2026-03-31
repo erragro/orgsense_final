@@ -59,7 +59,7 @@ ALL_MODULES: list[str] = [
 ]
 
 # Modules where new-user default view = False (admin must grant explicitly)
-ADMIN_ONLY_MODULES: set[str] = {"cardinal", "qaAgent", "crm"}
+ADMIN_ONLY_MODULES: set[str] = {"cardinal", "biAgent", "qaAgent", "crm"}
 
 # ---------------------------------------------------------------------------
 # User context dataclass returned by get_current_user

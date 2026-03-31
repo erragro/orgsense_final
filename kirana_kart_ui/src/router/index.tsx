@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createBrowserRouter, Navigate } from 'react-router-dom'
+import { createBrowserRouter } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
 import { AuthGuard } from '@/components/layout/AuthGuard'
 import { AccessGuard } from '@/components/layout/AccessGuard'
@@ -26,6 +26,10 @@ const protect = (Component: React.ComponentType, module: AppModule, permission: 
     {wrap(Component)}
   </AccessGuard>
 )
+
+// Public pages
+const LandingPage = lazy(() => import('@/pages/public/LandingPage'))
+const TeamPage = lazy(() => import('@/pages/public/TeamPage'))
 
 // Auth pages (public)
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage'))
@@ -59,57 +63,67 @@ const CRMGroupsPage         = lazy(() => import('@/pages/crm/CRMGroupsPage'))
 const CRMAutomationPage     = lazy(() => import('@/pages/crm/CRMAutomationPage'))
 const CRMSLAPoliciesPage    = lazy(() => import('@/pages/crm/CRMSLAPoliciesPage'))
 
+const NotFoundPage = () => (
+  <div className="flex h-screen flex-col items-center justify-center bg-zinc-950 text-white gap-4">
+    <div className="text-6xl font-bold text-zinc-600">404</div>
+    <div className="text-xl text-zinc-400">Page not found</div>
+    <a href="/" className="mt-2 rounded-lg bg-blue-600 px-6 py-2 text-sm font-medium hover:bg-blue-500 transition-colors">
+      Go home
+    </a>
+  </div>
+)
+
 export const router = createBrowserRouter([
+  // Public routes
+  { path: '/', element: wrap(LandingPage) },
+  { path: '/team', element: wrap(TeamPage) },
+
+  // Auth routes
+  { path: '/login', element: wrap(LoginPage) },
+  { path: '/signup', element: wrap(SignupPage) },
+  { path: '/auth/callback', element: wrap(OAuthCallbackPage) },
+
+  // Protected routes — pathless layout (no `path` prop)
   {
-    path: '/login',
-    element: wrap(LoginPage),
-  },
-  {
-    path: '/signup',
-    element: wrap(SignupPage),
-  },
-  {
-    path: '/auth/callback',
-    element: wrap(OAuthCallbackPage),
-  },
-  {
-    path: '/',
     element: (
       <AuthGuard>
         <AppShell />
       </AuthGuard>
     ),
+    errorElement: <NotFoundPage />,
     children: [
-      { index: true, element: <Navigate to="/dashboard" replace /> },
-      { path: 'dashboard', element: protect(DashboardPage, 'dashboard') },
-      { path: 'tickets', element: protect(TicketListPage, 'tickets') },
-      { path: 'tickets/:ticketId', element: protect(TicketDetailPage, 'tickets') },
-      { path: 'taxonomy', element: protect(TaxonomyPage, 'taxonomy') },
-      { path: 'taxonomy/*', element: protect(TaxonomyPage, 'taxonomy') },
-      { path: 'knowledge-base', element: protect(KBPage, 'knowledgeBase') },
-      { path: 'knowledge-base/*', element: protect(KBPage, 'knowledgeBase') },
-      { path: 'policy', element: protect(PolicyPage, 'policy') },
-      { path: 'policy/*', element: protect(PolicyPage, 'policy') },
-      { path: 'customers', element: protect(CustomerListPage, 'customers') },
-      { path: 'customers/:customerId', element: protect(CustomerDetailPage, 'customers') },
-      { path: 'analytics', element: protect(AnalyticsPage, 'analytics') },
-      { path: 'analytics/*', element: protect(AnalyticsPage, 'analytics') },
-      { path: 'system', element: protect(SystemPage, 'system') },
-      { path: 'system/*', element: protect(SystemPage, 'system') },
-      { path: 'bi-agent', element: protect(BIAgentPage, 'biAgent') },
-      { path: 'qa-agent', element: protect(QAAgentPage, 'qaAgent') },
-      { path: 'sandbox', element: protect(SandboxPage, 'sandbox') },
-      { path: 'cardinal', element: protect(CardinalPage, 'cardinal') },
-      { path: 'cardinal/*', element: protect(CardinalPage, 'cardinal') },
-      { path: 'users', element: protect(UserManagementPage, 'system', 'admin') },
-      { path: 'crm',                   element: protect(CRMQueuePage,          'crm') },
-      { path: 'crm/ticket/:queueId',   element: protect(CRMWorkViewPage,       'crm') },
-      { path: 'crm/dashboard',         element: protect(CRMAgentDashboardPage, 'crm') },
-      { path: 'crm/admin',             element: protect(CRMAdminDashboardPage, 'crm', 'admin') },
-      { path: 'crm/reports',           element: protect(CRMReportsPage,        'crm', 'admin') },
-      { path: 'crm/groups',            element: protect(CRMGroupsPage,         'crm', 'admin') },
-      { path: 'crm/automation',        element: protect(CRMAutomationPage,     'crm', 'admin') },
-      { path: 'crm/sla-policies',      element: protect(CRMSLAPoliciesPage,    'crm', 'admin') },
+      { path: '/dashboard', element: protect(DashboardPage, 'dashboard') },
+      { path: '/tickets', element: protect(TicketListPage, 'tickets') },
+      { path: '/tickets/:ticketId', element: protect(TicketDetailPage, 'tickets') },
+      { path: '/taxonomy', element: protect(TaxonomyPage, 'taxonomy') },
+      { path: '/taxonomy/*', element: protect(TaxonomyPage, 'taxonomy') },
+      { path: '/knowledge-base', element: protect(KBPage, 'knowledgeBase') },
+      { path: '/knowledge-base/*', element: protect(KBPage, 'knowledgeBase') },
+      { path: '/policy', element: protect(PolicyPage, 'policy') },
+      { path: '/policy/*', element: protect(PolicyPage, 'policy') },
+      { path: '/customers', element: protect(CustomerListPage, 'customers') },
+      { path: '/customers/:customerId', element: protect(CustomerDetailPage, 'customers') },
+      { path: '/analytics', element: protect(AnalyticsPage, 'analytics') },
+      { path: '/analytics/*', element: protect(AnalyticsPage, 'analytics') },
+      { path: '/system', element: protect(SystemPage, 'system') },
+      { path: '/system/*', element: protect(SystemPage, 'system') },
+      { path: '/bi-agent', element: protect(BIAgentPage, 'biAgent') },
+      { path: '/qa-agent', element: protect(QAAgentPage, 'qaAgent') },
+      { path: '/sandbox', element: protect(SandboxPage, 'sandbox') },
+      { path: '/cardinal', element: protect(CardinalPage, 'cardinal') },
+      { path: '/cardinal/*', element: protect(CardinalPage, 'cardinal') },
+      { path: '/users', element: protect(UserManagementPage, 'system', 'admin') },
+      { path: '/crm',                   element: protect(CRMQueuePage,          'crm') },
+      { path: '/crm/ticket/:queueId',   element: protect(CRMWorkViewPage,       'crm') },
+      { path: '/crm/dashboard',         element: protect(CRMAgentDashboardPage, 'crm') },
+      { path: '/crm/admin',             element: protect(CRMAdminDashboardPage, 'crm', 'admin') },
+      { path: '/crm/reports',           element: protect(CRMReportsPage,        'crm', 'admin') },
+      { path: '/crm/groups',            element: protect(CRMGroupsPage,         'crm', 'admin') },
+      { path: '/crm/automation',        element: protect(CRMAutomationPage,     'crm', 'admin') },
+      { path: '/crm/sla-policies',      element: protect(CRMSLAPoliciesPage,    'crm', 'admin') },
     ],
   },
+
+  // Catch-all 404
+  { path: '*', element: <NotFoundPage /> },
 ])
