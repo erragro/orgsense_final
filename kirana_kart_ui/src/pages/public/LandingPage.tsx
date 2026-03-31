@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, forwardRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Cpu, ShieldCheck, BarChart3, ClipboardCheck, LifeBuoy, BookOpen,
@@ -35,9 +35,6 @@ const ANIMATION_CSS = `
     33% { transform: translate(30px, -20px) scale(1.05); }
     66% { transform: translate(-20px, 15px) scale(0.97); }
   }
-  .float-a { animation: float-a 7s ease-in-out infinite; }
-  .float-b { animation: float-b 9s ease-in-out infinite 1.5s; }
-  .float-c { animation: float-c 11s ease-in-out infinite 3s; }
   .orb-drift { animation: orb-drift 18s ease-in-out infinite; }
   .orb-drift-2 { animation: orb-drift 22s ease-in-out infinite reverse 4s; }
   .hero-text-1 { animation: fade-up 0.7s ease forwards; }
@@ -124,18 +121,18 @@ function Navbar() {
 
 // ─── Floating badge ───────────────────────────────────────────────────────────
 
-function FloatingBadge({
-  icon: Icon, label, value, className, floatClass, accent,
-}: {
+const FloatingBadge = forwardRef<HTMLDivElement, {
   icon: React.ComponentType<{ className?: string }>
   label: string
   value: string
   className?: string
-  floatClass: string
   accent: string
-}) {
+}>(function FloatingBadge({ icon: Icon, label, value, className, accent }, ref) {
   return (
-    <div className={`${floatClass} ${className} absolute hidden lg:flex items-center gap-2.5 rounded-2xl border bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm px-4 py-3 shadow-xl shadow-black/10 dark:shadow-black/40 border-slate-200/80 dark:border-zinc-700/60`}>
+    <div
+      ref={ref}
+      className={`${className} absolute hidden lg:flex items-center gap-2.5 rounded-2xl border bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm px-4 py-3 shadow-xl shadow-black/10 dark:shadow-black/40 border-slate-200/80 dark:border-zinc-700/60 will-change-transform`}
+    >
       <div className={`w-8 h-8 rounded-xl bg-gradient-to-br ${accent} flex items-center justify-center flex-shrink-0`}>
         <Icon className="w-4 h-4 text-white" />
       </div>
@@ -145,7 +142,7 @@ function FloatingBadge({
       </div>
     </div>
   )
-}
+})
 
 // ─── Capability card ──────────────────────────────────────────────────────────
 
@@ -210,21 +207,28 @@ export default function LandingPage() {
   const user = useAuthStore((s) => s.user)
   const { theme } = useUIStore()
 
-  const orb1Ref = useRef<HTMLDivElement>(null)
-  const orb2Ref = useRef<HTMLDivElement>(null)
-  const heroBadgesRef = useRef<HTMLDivElement>(null)
+  const orb1Ref   = useRef<HTMLDivElement>(null)
+  const orb2Ref   = useRef<HTMLDivElement>(null)
+  const badge1Ref = useRef<HTMLDivElement>(null)
+  const badge2Ref = useRef<HTMLDivElement>(null)
+  const badge3Ref = useRef<HTMLDivElement>(null)
+  const badge4Ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (user) navigate('/dashboard', { replace: true })
   }, [user, navigate])
 
-  // Parallax on scroll
+  // Parallax on scroll — direct DOM, no re-render
   useEffect(() => {
     const handler = () => {
       const y = window.scrollY
-      if (orb1Ref.current) orb1Ref.current.style.transform = `translateY(${y * 0.18}px)`
-      if (orb2Ref.current) orb2Ref.current.style.transform = `translateY(${y * -0.12}px)`
-      if (heroBadgesRef.current) heroBadgesRef.current.style.transform = `translateY(${y * 0.08}px)`
+      if (orb1Ref.current)   orb1Ref.current.style.transform   = `translateY(${y * 0.18}px)`
+      if (orb2Ref.current)   orb2Ref.current.style.transform   = `translateY(${y * -0.12}px)`
+      // Each badge has its own rate — no CSS animation conflict
+      if (badge1Ref.current) badge1Ref.current.style.transform = `translateY(${y * -0.07}px)`
+      if (badge2Ref.current) badge2Ref.current.style.transform = `translateY(${y * -0.11}px)`
+      if (badge3Ref.current) badge3Ref.current.style.transform = `translateY(${y * -0.05}px)`
+      if (badge4Ref.current) badge4Ref.current.style.transform = `translateY(${y * -0.09}px)`
     }
     window.addEventListener('scroll', handler, { passive: true })
     return () => window.removeEventListener('scroll', handler)
@@ -302,17 +306,11 @@ export default function LandingPage() {
             </div>
           </div>
 
-          {/* Floating accent badges — parallax via ref */}
-          <div ref={heroBadgesRef}>
-            <FloatingBadge icon={Cpu} value="5-Phase" label="Cardinal Pipeline" accent="from-blue-600 to-blue-500"
-              floatClass="float-a" className="-left-4 top-1/4" />
-            <FloatingBadge icon={BarChart3} value="Plain English" label="BI Queries" accent="from-emerald-600 to-teal-500"
-              floatClass="float-b" className="-right-4 top-1/3" />
-            <FloatingBadge icon={ClipboardCheck} value="10-Param" label="QA Scoring" accent="from-orange-600 to-amber-500"
-              floatClass="float-c" className="left-8 bottom-16" />
-            <FloatingBadge icon={ShieldCheck} value="100%" label="Interactions Audited" accent="from-violet-600 to-violet-500"
-              floatClass="float-b" className="right-8 bottom-8" />
-          </div>
+          {/* Floating accent badges — each has its own ref + independent scroll rate */}
+          <FloatingBadge ref={badge1Ref} icon={Cpu}           value="5-Phase"       label="Cardinal Pipeline"     accent="from-blue-600 to-blue-500"     className="left-0 top-[28%]" />
+          <FloatingBadge ref={badge2Ref} icon={BarChart3}     value="Plain English" label="BI Queries"            accent="from-emerald-600 to-teal-500"  className="right-0 top-[22%]" />
+          <FloatingBadge ref={badge3Ref} icon={ClipboardCheck} value="10-Param"     label="QA Scoring"           accent="from-orange-600 to-amber-500"  className="left-4 bottom-[18%]" />
+          <FloatingBadge ref={badge4Ref} icon={ShieldCheck}   value="100%"          label="Interactions Audited" accent="from-violet-600 to-violet-500"  className="right-4 bottom-[12%]" />
         </div>
       </section>
 
