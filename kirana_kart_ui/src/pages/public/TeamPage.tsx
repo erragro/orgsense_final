@@ -184,7 +184,7 @@ export default function TeamPage() {
     role: 'Chief Creator',
     title: 'AI Solutions Architect · AI Product Manager · Full Stack',
     summary:
-      '7+ years at Swiggy engineering operational decision systems. Architect of Iris — an in-house audit platform that replaced Observe.AI and cut costs by ~₹5Cr — and Resolute, a decision engine supporting 8K+ users that reduced average handling time by 50% and delivered ₹2.4Cr in operational savings.',
+      '7+ years engineering operational decision systems at one of India\'s largest on-demand platforms. Architect of Iris — an in-house audit platform that replaced Observe.AI and cut costs by ~₹5Cr — and Resolute, a decision engine supporting 8K+ users that reduced average handling time by 50% and delivered ₹2.4Cr in operational savings.',
     stats: ['₹5Cr+ (Iris Platform)', '₹2.4Cr Cost Reduction', '8K+ Users', 'Top 10 Company Project'],
     skills: ['Hierarchical RAG', 'LLM Pipelines', 'Python', 'React', 'System Design', 'Policy-as-Code'],
     linkedIn: 'https://www.linkedin.com/in/surajit-chaudhuri',
@@ -198,7 +198,7 @@ export default function TeamPage() {
     role: 'AI Full Stack Developer',
     title: 'Technical Architect · Process Automation · AI & Content Strategist',
     summary:
-      'Process automation architect at Swiggy. Built AI/NLP escalation-prevention models saving ₹7Cr annually in refund leakage, eliminated 20K+ manual hours, and engineered deduplication systems that processed 1.5L+ tickets where 98% of the original noise was duplicates.',
+      'Process automation architect with deep roots in high-volume CX operations. Built AI/NLP escalation-prevention models saving ₹7Cr annually in refund leakage, eliminated 20K+ manual hours, and engineered deduplication systems that processed 1.5L+ tickets where 98% of the original noise was duplicates.',
     stats: ['₹7Cr Annual Savings', '20K+ Hours Automated', '1.5L+ Tickets Deduplicated', '98% Noise Eliminated'],
     skills: ['Python', 'NLP/ML', 'LangChain', 'Google Workspace', 'MERN Stack', 'Snowflake'],
     linkedIn: 'https://www.linkedin.com/in/renzil-rodrigues',
