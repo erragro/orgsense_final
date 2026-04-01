@@ -45,20 +45,22 @@ export function PipelineTab({ canAdmin }: Props) {
     queryFn: () => kbApi.getActiveVersion().then((r) => r.data),
   })
 
-  // Poll compiler status
+  // Fetch compiler status whenever a version is selected (not just after clicking Compile)
   const { data: compilerStatusData } = useQuery({
     queryKey: ['compiler', 'status', versionLabel],
     queryFn: () => compilerApi.getStatus(versionLabel).then((r) => r.data),
-    enabled: !!versionLabel && compileStatus !== 'idle',
+    enabled: !!versionLabel,
     refetchInterval: compileStatus === 'running' ? 3000 : false,
+    retry: false, // 404 = not compiled yet, don't spam retries
   })
 
-  // Poll vector status
+  // Fetch vector status whenever a version is selected
   const { data: vectorStatusData } = useQuery({
     queryKey: ['vector', 'status', versionLabel],
     queryFn: () => vectorizationApi.getStatus(versionLabel).then((r) => r.data),
-    enabled: !!versionLabel && vectorStatus !== 'idle',
+    enabled: !!versionLabel,
     refetchInterval: vectorStatus === 'running' ? 3000 : false,
+    retry: false,
   })
 
   // Include draft AND compiled docs so users can continue vectorize/publish after compile
@@ -199,13 +201,16 @@ export function PipelineTab({ canAdmin }: Props) {
             Compile Now
           </Button>
           {compilerStatusData && (
-            <span className={cn('text-xs', compilerStatusData.is_active ? 'text-green-400' : 'text-amber-400')}>
+            <span className="text-xs text-green-400">
               {compilerStatusData.artifact_hash ? 'compiled ✓' : 'pending'}
             </span>
           )}
         </div>
       ),
-      status: compileStatus,
+      // Backend truth takes precedence: if compiled, show done regardless of local error state
+      status: compilerStatusData?.artifact_hash
+        ? 'done'
+        : compileStatus === 'running' ? 'running' : compileStatus,
       disabled: !versionLabel,
     },
     {
@@ -234,7 +239,12 @@ export function PipelineTab({ canAdmin }: Props) {
           )}
         </div>
       ),
-      status: vectorStatus,
+      // Backend truth: if vectorization already completed, show done even if not clicked this session
+      status: (vectorStatusData as any)?.vector_status === 'completed'
+        ? 'done'
+        : (vectorStatusData as any)?.vector_status === 'failed'
+        ? 'error'
+        : vectorStatus === 'running' ? 'running' : vectorStatus,
       disabled: !versionLabel,
     },
     {
