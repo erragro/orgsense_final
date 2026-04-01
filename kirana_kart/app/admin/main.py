@@ -363,9 +363,14 @@ def system_status():
     # Weaviate
     try:
         import weaviate
-        client = weaviate.Client(
-            f"http://{settings.weaviate_host}:{settings.weaviate_http_port}"
-        )
+        weaviate_kwargs: dict = {
+            "url": f"http://{settings.weaviate_host}:{settings.weaviate_http_port}",
+        }
+        if settings.weaviate_api_key:
+            weaviate_kwargs["auth_client_secret"] = weaviate.AuthApiKey(
+                api_key=settings.weaviate_api_key
+            )
+        client = weaviate.Client(**weaviate_kwargs)
         status["weaviate"] = "ok" if client.is_ready() else "error"
     except Exception:
         status["weaviate"] = "error"

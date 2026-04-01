@@ -148,6 +148,7 @@ class Settings(BaseSettings):
     weaviate_host: str = Field(default="127.0.0.1", alias="WEAVIATE_HOST")
     weaviate_http_port: int = Field(default=8080,   alias="WEAVIATE_HTTP_PORT")
     weaviate_grpc_port: int = Field(default=50051,  alias="WEAVIATE_GRPC_PORT")
+    weaviate_api_key: str = Field(default="",       alias="WEAVIATE_API_KEY")
     embedding_model: str = Field(
         default="text-embedding-3-large",
         alias="EMBEDDING_MODEL",
