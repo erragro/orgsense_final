@@ -246,6 +246,20 @@ class Settings(BaseSettings):
     pii_encryption_key: str = Field(default="", alias="PII_ENCRYPTION_KEY")
 
     # ============================================================
+    # EMAIL / SMTP
+    # ============================================================
+
+    # Set SMTP_HOST to enable outbound email (CRM customer replies, alerts).
+    # Leave empty to disable email sending (safe default for dev/test).
+    smtp_host: str = Field(default="", alias="SMTP_HOST")
+    smtp_port: int = Field(default=587, alias="SMTP_PORT")
+    # Sender login credentials (Gmail: use an App Password, not account password)
+    smtp_user: str = Field(default="", alias="SMTP_USER")
+    smtp_pass: str = Field(default="", alias="SMTP_PASS")
+    # Display "From" address — can differ from smtp_user when using Gmail Send As
+    smtp_from: str = Field(default="", alias="SMTP_FROM")
+
+    # ============================================================
     # DATA GOVERNANCE
     # ============================================================
 

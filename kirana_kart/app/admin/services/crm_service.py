@@ -26,6 +26,7 @@ from sqlalchemy import text
 
 from app.admin.db import get_db_session
 from app.admin.services.auth_service import UserContext
+from app.admin.services.email_service import send_email
 
 logger = logging.getLogger("kirana_kart.crm")
 
@@ -1073,6 +1074,18 @@ def take_action(
             _log_action(session, ticket_id, queue_id, actor.id, "REPLY_CUSTOMER")
             _notify_watchers(session, ticket_id, queue_id, "REPLY_SENT",
                              f"Reply sent on ticket #{ticket_id}", None, exclude_user_id=actor.id)
+            # Send actual email to customer if cx_email is available
+            cx_email = hq.get("cx_email") or hq.get("subject", "")
+            if hq.get("cx_email"):
+                subject_line = hq.get("subject") or f"Re: Your support request #{ticket_id}"
+                if not subject_line.lower().startswith("re:"):
+                    subject_line = f"Re: {subject_line}"
+                send_email(
+                    to=hq["cx_email"],
+                    subject=subject_line,
+                    body_html=f"<p>{reply_body}</p>",
+                    body_text=reply_body,
+                )
 
         elif action_type == "ESCALATE":
             if not reason:
