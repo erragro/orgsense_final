@@ -107,7 +107,7 @@ services:
       OTEL_SAMPLE_RATE: "0.1"
       DEPLOYMENT_ENV: development
       BI_DB_USER: bi_readonly
-      BI_DB_PASSWORD: REDACTED
+      BI_DB_PASSWORD: ${BI_DB_PASSWORD:-REDACTED}
       # JWT Auth — CHANGE IN PRODUCTION via .env
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-REDACTED}
       JWT_ACCESS_EXPIRE_MINUTES: "60"
