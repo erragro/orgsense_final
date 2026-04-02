@@ -216,14 +216,14 @@ def _set_auth_cookies(response: Response, access_token: str, refresh_token: str)
         secure=_COOKIE_SECURE,
         samesite=_COOKIE_SAMESITE,
         max_age=settings.jwt_refresh_expire_days * 86400,
-        path="/auth/refresh",
+        path="/",  # path="/" works through any proxy (nginx, GKE ingress)
     )
 
 
 def _clear_auth_cookies(response: Response) -> None:
     """Clear auth cookies on logout."""
     response.delete_cookie(_ACCESS_COOKIE, path="/")
-    response.delete_cookie(_REFRESH_COOKIE, path="/auth/refresh")
+    response.delete_cookie(_REFRESH_COOKIE, path="/")
 
 
 # ---------------------------------------------------------------------------

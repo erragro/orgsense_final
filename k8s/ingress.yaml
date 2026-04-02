@@ -14,6 +14,8 @@ metadata:
     nginx.ingress.kubernetes.io/limit-connections: "10"
     nginx.ingress.kubernetes.io/limit-burst-multiplier: "3"
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Disable buffering so SSE chunks (bi-agent/query, qa-agent/evaluate) reach browser immediately
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
 spec:
   ingressClassName: "nginx"
   tls:

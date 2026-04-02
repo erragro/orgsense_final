@@ -72,9 +72,12 @@ def ensure_bi_tables() -> None:
         "ALTER TABLE kirana_kart.bi_chat_sessions ADD COLUMN IF NOT EXISTS user_id INTEGER",
         "ALTER TABLE kirana_kart.bi_chat_sessions DROP COLUMN IF EXISTS token_hash",
     ]
+    # Keep each statement separate — psycopg2 does not support multi-statement execute()
+    ddl_statements = [s.strip() for s in ddl.split(";") if s.strip()]
     try:
         with engine.connect() as conn:
-            conn.execute(text(ddl))
+            for stmt in ddl_statements:
+                conn.execute(text(stmt))
             for stmt in migrations:
                 conn.execute(text(stmt))
             conn.commit()

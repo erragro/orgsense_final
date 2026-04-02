@@ -104,16 +104,18 @@ def ensure_qa_tables() -> None:
     CREATE INDEX IF NOT EXISTS idx_qa_evaluations_ticket
         ON kirana_kart.qa_evaluations(ticket_id);
     """
-    migrations = """
-    ALTER TABLE kirana_kart.qa_evaluations
-        ADD COLUMN IF NOT EXISTS python_qa_score NUMERIC(5,4);
-    ALTER TABLE kirana_kart.qa_evaluations
-        ADD COLUMN IF NOT EXISTS python_findings JSONB;
-    """
+    # Keep each statement separate — psycopg2 does not support multi-statement execute()
+    ddl_statements = [s.strip() for s in ddl.split(";") if s.strip()]
+    migrations = [
+        "ALTER TABLE kirana_kart.qa_evaluations ADD COLUMN IF NOT EXISTS python_qa_score NUMERIC(5,4)",
+        "ALTER TABLE kirana_kart.qa_evaluations ADD COLUMN IF NOT EXISTS python_findings JSONB",
+    ]
     try:
         with engine.connect() as conn:
-            conn.execute(text(ddl))
-            conn.execute(text(migrations))
+            for stmt in ddl_statements:
+                conn.execute(text(stmt))
+            for stmt in migrations:
+                conn.execute(text(stmt))
             conn.commit()
         logger.info("QA tables ensured (including python_qa_score / python_findings columns).")
     except Exception as exc:

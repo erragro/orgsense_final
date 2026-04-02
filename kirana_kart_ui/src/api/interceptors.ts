@@ -126,3 +126,13 @@ ingestClient.interceptors.response.use(
     return Promise.reject(error)
   }
 )
+
+/**
+ * Returns the current in-memory access token.
+ * Use this in native fetch / SSE calls that bypass the axios interceptor
+ * (e.g. BI Agent and QA Agent streaming endpoints).
+ * Returns null until the first successful login or token refresh.
+ */
+export function getAccessToken(): string | null {
+  return _inMemoryAccessToken
+}

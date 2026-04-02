@@ -9,6 +9,7 @@ import {
 import { cn } from '@/lib/cn'
 import { useAuthStore } from '@/stores/auth.store'
 import { qaApi } from '@/api/governance/qa.api'
+import { getAccessToken } from '@/api/interceptors'
 import { useToastStore } from '@/stores/toast.store'
 import { Spinner } from '@/components/ui/Spinner'
 import type {
@@ -668,7 +669,7 @@ export default function QAAgentPage() {
     setActiveEvalId(null)
     setLive({ ...emptyLiveEval(), streaming: true })
 
-    const token = useAuthStore.getState().accessToken
+    const token = getAccessToken()
     const res = await fetch(`${GOVERNANCE_URL}/qa-agent/evaluate`, {
       method: 'POST',
       headers: {

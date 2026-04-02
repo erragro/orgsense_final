@@ -5,8 +5,8 @@ import {
   Loader2, AlertTriangle, MessageSquare, Database,
 } from 'lucide-react'
 import { cn } from '@/lib/cn'
-import { useAuthStore } from '@/stores/auth.store'
 import { biAgentApi } from '@/api/governance/biagent.api'
+import { getAccessToken } from '@/api/interceptors'
 import { useToastStore } from '@/stores/toast.store'
 import { CopyButton } from '@/components/common/CopyButton'
 import { MarkdownContent } from '@/components/common/MarkdownContent'
@@ -134,7 +134,6 @@ function FilterBanner() {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function BIAgentPage() {
-  const { accessToken } = useAuthStore()
   const { addToast } = useToastStore()
   const qc = useQueryClient()
 
@@ -264,7 +263,7 @@ export default function BIAgentPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken ?? ''}`,
+          'Authorization': `Bearer ${getAccessToken() ?? ''}`,
         },
         body: JSON.stringify({
           session_id: activeSessionId,
@@ -343,7 +342,7 @@ export default function BIAgentPage() {
     } finally {
       setStreaming(false)
     }
-  }, [chatEnabled, question, streaming, activeSessionId, module, dateFrom, dateTo, accessToken, qc])
+  }, [chatEnabled, question, streaming, activeSessionId, module, dateFrom, dateTo, qc])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
