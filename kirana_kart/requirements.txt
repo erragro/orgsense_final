@@ -34,9 +34,9 @@ celery[redis]>=5.4.0,<6.0.0
 openai>=1.30.0,<2.0.0
 
 # ----------------------------
-# Vector Database
+# Vector Database (pgvector — Weaviate removed)
 # ----------------------------
-weaviate-client>=3.26.7,<4.0.0
+pgvector>=0.3.0,<1.0.0
 
 # ----------------------------
 # Document Processing
