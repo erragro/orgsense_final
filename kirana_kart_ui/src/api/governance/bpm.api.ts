@@ -101,6 +101,61 @@ export interface MLModelHealth {
   trained_at?: string
 }
 
+// ── SOP Extraction proposal types ──────────────────────────────────────────
+
+export type ProposalStatus = 'pending' | 'accepted' | 'rejected' | 'edited'
+export type ProposalType = 'new' | 'update' | 'existing'
+
+export interface TaxonomyProposal {
+  id: number
+  issue_code: string
+  label: string
+  description: string | null
+  parent_code: string | null
+  level: number
+  proposal_type: ProposalType
+  status: ProposalStatus
+  extraction_confidence: number | null
+  edit_reason: string | null
+  llm_output: Record<string, unknown> | null
+  user_output: Record<string, unknown> | null
+  edited_at: string | null
+}
+
+export interface ActionProposal {
+  id: number
+  action_code_id: string
+  action_name: string
+  action_description: string | null
+  exact_action: string | null
+  parent_issue_codes: string[]
+  requires_refund: boolean
+  requires_escalation: boolean
+  automation_eligible: boolean
+  proposal_type: ProposalType
+  status: ProposalStatus
+  extraction_confidence: number | null
+  edit_reason: string | null
+  llm_output: Record<string, unknown> | null
+  user_output: Record<string, unknown> | null
+  edited_at: string | null
+}
+
+export interface ReviewProposalPayload {
+  status: ProposalStatus
+  edit_reason?: string
+  user_output?: Record<string, unknown>
+}
+
+export interface GeneratedRule {
+  rule_id: string
+  issue_type_l1: string
+  issue_type_l2: string | null
+  action_code_id: string
+  action_name: string
+  exact_action: string | null
+}
+
 // ============================================================
 // KB MANAGEMENT
 // ============================================================
@@ -183,4 +238,30 @@ export const bpmApi = {
 
   forceRetrain: (kbId = 'default') =>
     apiClient.post('/bpm/ml/retrain', null, { params: { kb_id: kbId } }),
+
+  // --- SOP Extraction Pipeline ---
+
+  extractTaxonomy: (kbId: string, entityId: string) =>
+    apiClient.post<TaxonomyProposal[]>(`/bpm/kb/${kbId}/extract-taxonomy`, { entity_id: entityId }),
+
+  listTaxonomyProposals: (kbId: string, entityId: string) =>
+    apiClient.get<TaxonomyProposal[]>(`/bpm/kb/${kbId}/taxonomy-proposals`, { params: { entity_id: entityId } }),
+
+  reviewTaxonomyProposal: (kbId: string, proposalId: number, payload: ReviewProposalPayload) =>
+    apiClient.put<TaxonomyProposal>(`/bpm/kb/${kbId}/taxonomy-proposals/${proposalId}`, payload),
+
+  extractActions: (kbId: string, entityId: string) =>
+    apiClient.post<ActionProposal[]>(`/bpm/kb/${kbId}/extract-actions`, { entity_id: entityId }),
+
+  listActionProposals: (kbId: string, entityId: string) =>
+    apiClient.get<ActionProposal[]>(`/bpm/kb/${kbId}/action-proposals`, { params: { entity_id: entityId } }),
+
+  reviewActionProposal: (kbId: string, proposalId: number, payload: ReviewProposalPayload) =>
+    apiClient.put<ActionProposal>(`/bpm/kb/${kbId}/action-proposals/${proposalId}`, payload),
+
+  generateRules: (kbId: string, entityId: string) =>
+    apiClient.post<GeneratedRule[]>(`/bpm/kb/${kbId}/generate-rules`, { entity_id: entityId }),
+
+  getExtractionStandards: (kbId: string) =>
+    apiClient.get<{ kb_id: string; content: string; updated_at: string }>(`/bpm/standards/${kbId}`),
 }

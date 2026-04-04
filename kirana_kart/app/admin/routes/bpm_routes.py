@@ -28,6 +28,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
 
@@ -618,6 +619,13 @@ def publish_version_bpm(
                 detail=f"Cannot publish from stage '{row['current_stage']}'",
             )
 
+        # Commit draft proposals to global registries + regenerate standards
+        try:
+            from app.l45_ml_platform.compiler.sop_extractor import commit_proposals_to_registry
+            commit_proposals_to_registry(engine, kb_id, entity_id, actor_id=u.id)
+        except Exception:
+            logger.warning("commit_proposals_to_registry failed (non-fatal)", exc_info=True)
+
         return {"message": "Published", "entity_id": entity_id}
 
     except HTTPException:
@@ -711,3 +719,298 @@ def force_retrain(
     from app.l45_ml_platform.models.training_jobs import run_nightly_retraining
     result = run_nightly_retraining(engine, kb_id)
     return result
+
+
+# ============================================================
+# SOP EXTRACTION — 3-STAGE PIPELINE
+# ============================================================
+
+class ReviewProposalRequest(BaseModel):
+    status: str        # 'accepted' | 'rejected' | 'edited'
+    edit_reason: Optional[str] = None
+    user_output: Optional[dict] = None   # edited fields
+
+
+@router.post("/kb/{kb_id}/extract-taxonomy")
+async def extract_taxonomy_stage(
+    kb_id: str,
+    body: dict,
+    u: UserContext = Depends(_kb_edit),
+):
+    """
+    Stage 1: LLM reads the uploaded SOP and proposes an issue taxonomy.
+    entity_id links to the knowledge_base_raw_uploads row.
+    """
+    from sqlalchemy import text
+    from app.l45_ml_platform.compiler.sop_extractor import extract_taxonomy
+
+    entity_id = body.get("entity_id", "")
+    if not entity_id:
+        raise HTTPException(status_code=400, detail="entity_id required")
+    _require_kb_access(u, kb_id, "edit")
+
+    try:
+        # Fetch the markdown text for this upload
+        with engine.connect() as conn:
+            row = conn.execute(text("""
+                SELECT markdown_content FROM kirana_kart.knowledge_base_raw_uploads
+                WHERE document_id = :eid AND kb_id = :kb_id
+            """), {"eid": entity_id, "kb_id": kb_id}).fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Upload not found")
+
+        sop_text = row[0] or ""
+        proposals = extract_taxonomy(engine, kb_id, entity_id, sop_text)
+        return {"proposals": proposals, "count": len(proposals)}
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("extract_taxonomy_stage failed")
+        raise HTTPException(status_code=500, detail="Taxonomy extraction failed")
+
+
+@router.get("/kb/{kb_id}/taxonomy-proposals")
+def list_taxonomy_proposals(
+    kb_id: str,
+    entity_id: str = Query(...),
+    u: UserContext = Depends(_kb_view),
+):
+    """List all taxonomy proposals for a given entity/upload."""
+    from sqlalchemy import text
+    _require_kb_access(u, kb_id, "view")
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT id, issue_code, label, description, parent_code, level,
+                   proposal_type, status, extraction_confidence, edit_reason,
+                   llm_output, user_output, edited_at
+            FROM kirana_kart.draft_taxonomy_proposals
+            WHERE kb_id = :kb_id AND entity_id = :eid
+            ORDER BY level, issue_code
+        """), {"kb_id": kb_id, "eid": entity_id}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+@router.put("/kb/{kb_id}/taxonomy-proposals/{proposal_id}")
+def review_taxonomy_proposal(
+    kb_id: str,
+    proposal_id: int,
+    body: ReviewProposalRequest,
+    u: UserContext = Depends(_kb_edit),
+):
+    """Accept, reject, or edit a taxonomy proposal. Edits recorded for ML."""
+    from sqlalchemy import text
+    _require_kb_access(u, kb_id, "edit")
+
+    allowed = {"accepted", "rejected", "edited"}
+    if body.status not in allowed:
+        raise HTTPException(status_code=400, detail=f"status must be one of {allowed}")
+
+    with engine.begin() as conn:
+        row = conn.execute(text("""
+            SELECT * FROM kirana_kart.draft_taxonomy_proposals
+            WHERE id = :id AND kb_id = :kb_id
+        """), {"id": proposal_id, "kb_id": kb_id}).mappings().first()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Proposal not found")
+
+        conn.execute(text("""
+            UPDATE kirana_kart.draft_taxonomy_proposals
+            SET status = :status,
+                edit_reason = :reason,
+                user_output = :user_out,
+                edited_at = NOW(),
+                edited_by = :uid
+            WHERE id = :id
+        """), {
+            "status": body.status,
+            "reason": body.edit_reason,
+            "user_out": json.dumps(body.user_output) if body.user_output else None,
+            "uid": u.id,
+            "id": proposal_id,
+        })
+
+        # Record to edit log
+        conn.execute(text("""
+            INSERT INTO kirana_kart.rule_edit_log
+                (kb_id, entity_id, stage, item_ref, edit_type, llm_output, user_output, edit_reason, created_by)
+            VALUES
+                (:kb_id, :eid, 'taxonomy', :ref, :etype, :llm, :usr, :reason, :uid)
+        """), {
+            "kb_id": kb_id,
+            "eid": row["entity_id"],
+            "ref": row["issue_code"],
+            "etype": body.status,
+            "llm": row["llm_output"],
+            "usr": json.dumps(body.user_output) if body.user_output else None,
+            "reason": body.edit_reason,
+            "uid": u.id,
+        })
+
+    return {"id": proposal_id, "status": body.status}
+
+
+@router.post("/kb/{kb_id}/extract-actions")
+async def extract_actions_stage(
+    kb_id: str,
+    body: dict,
+    u: UserContext = Depends(_kb_edit),
+):
+    """
+    Stage 2: LLM reads the SOP + accepted taxonomy proposals → extracts action codes.
+    Must be called after at least some taxonomy proposals are accepted.
+    """
+    from sqlalchemy import text
+    from app.l45_ml_platform.compiler.sop_extractor import extract_actions
+
+    entity_id = body.get("entity_id", "")
+    if not entity_id:
+        raise HTTPException(status_code=400, detail="entity_id required")
+    _require_kb_access(u, kb_id, "edit")
+
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text("""
+                SELECT markdown_content FROM kirana_kart.knowledge_base_raw_uploads
+                WHERE document_id = :eid AND kb_id = :kb_id
+            """), {"eid": entity_id, "kb_id": kb_id}).fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Upload not found")
+
+        sop_text = row[0] or ""
+        proposals = extract_actions(engine, kb_id, entity_id, sop_text)
+        return {"proposals": proposals, "count": len(proposals)}
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("extract_actions_stage failed")
+        raise HTTPException(status_code=500, detail="Action extraction failed")
+
+
+@router.get("/kb/{kb_id}/action-proposals")
+def list_action_proposals(
+    kb_id: str,
+    entity_id: str = Query(...),
+    u: UserContext = Depends(_kb_view),
+):
+    """List all action proposals for a given entity/upload."""
+    from sqlalchemy import text
+    _require_kb_access(u, kb_id, "view")
+    with engine.connect() as conn:
+        rows = conn.execute(text("""
+            SELECT id, action_code_id, action_name, action_description, exact_action,
+                   parent_issue_codes, requires_refund, requires_escalation,
+                   automation_eligible, proposal_type, status,
+                   extraction_confidence, edit_reason, llm_output, user_output, edited_at
+            FROM kirana_kart.draft_action_proposals
+            WHERE kb_id = :kb_id AND entity_id = :eid
+            ORDER BY action_code_id
+        """), {"kb_id": kb_id, "eid": entity_id}).mappings().all()
+    return [dict(r) for r in rows]
+
+
+@router.put("/kb/{kb_id}/action-proposals/{proposal_id}")
+def review_action_proposal(
+    kb_id: str,
+    proposal_id: int,
+    body: ReviewProposalRequest,
+    u: UserContext = Depends(_kb_edit),
+):
+    """Accept, reject, or edit an action proposal. Edits recorded for ML."""
+    from sqlalchemy import text
+    _require_kb_access(u, kb_id, "edit")
+
+    allowed = {"accepted", "rejected", "edited"}
+    if body.status not in allowed:
+        raise HTTPException(status_code=400, detail=f"status must be one of {allowed}")
+
+    with engine.begin() as conn:
+        row = conn.execute(text("""
+            SELECT * FROM kirana_kart.draft_action_proposals
+            WHERE id = :id AND kb_id = :kb_id
+        """), {"id": proposal_id, "kb_id": kb_id}).mappings().first()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Proposal not found")
+
+        conn.execute(text("""
+            UPDATE kirana_kart.draft_action_proposals
+            SET status = :status,
+                edit_reason = :reason,
+                user_output = :user_out,
+                edited_at = NOW(),
+                edited_by = :uid
+            WHERE id = :id
+        """), {
+            "status": body.status,
+            "reason": body.edit_reason,
+            "user_out": json.dumps(body.user_output) if body.user_output else None,
+            "uid": u.id,
+            "id": proposal_id,
+        })
+
+        conn.execute(text("""
+            INSERT INTO kirana_kart.rule_edit_log
+                (kb_id, entity_id, stage, item_ref, edit_type, llm_output, user_output, edit_reason, created_by)
+            VALUES
+                (:kb_id, :eid, 'action', :ref, :etype, :llm, :usr, :reason, :uid)
+        """), {
+            "kb_id": kb_id,
+            "eid": row["entity_id"],
+            "ref": row["action_code_id"],
+            "etype": body.status,
+            "llm": row["llm_output"],
+            "usr": json.dumps(body.user_output) if body.user_output else None,
+            "reason": body.edit_reason,
+            "uid": u.id,
+        })
+
+    return {"id": proposal_id, "status": body.status}
+
+
+@router.post("/kb/{kb_id}/generate-rules")
+def generate_rules_stage(
+    kb_id: str,
+    body: dict,
+    u: UserContext = Depends(_kb_edit),
+):
+    """
+    Stage 3: Deterministic rule generation from accepted taxonomy × action proposals.
+    No LLM call. Returns the generated rules.
+    """
+    from app.l45_ml_platform.compiler.sop_extractor import generate_rules
+
+    entity_id = body.get("entity_id", "")
+    if not entity_id:
+        raise HTTPException(status_code=400, detail="entity_id required")
+    _require_kb_access(u, kb_id, "edit")
+
+    try:
+        rules = generate_rules(engine, kb_id, entity_id)
+        return {"rules": rules, "count": len(rules)}
+    except Exception:
+        logger.exception("generate_rules_stage failed")
+        raise HTTPException(status_code=500, detail="Rule generation failed")
+
+
+@router.get("/standards/{kb_id}")
+def get_extraction_standards(
+    kb_id: str,
+    u: UserContext = Depends(_kb_view),
+):
+    """Return the current extraction_standards.md for this KB."""
+    from sqlalchemy import text
+    _require_kb_access(u, kb_id, "view")
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT standards_md, version, updated_at
+            FROM kirana_kart.extraction_standards
+            WHERE kb_id = :kb_id
+        """), {"kb_id": kb_id}).fetchone()
+    if not row:
+        return {"standards_md": "", "version": 0, "updated_at": None}
+    return {"standards_md": row[0], "version": row[1], "updated_at": str(row[2])}

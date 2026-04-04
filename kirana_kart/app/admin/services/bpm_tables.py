@@ -295,6 +295,131 @@ CREATE INDEX IF NOT EXISTS idx_qa_flag_overrides_eval ON kirana_kart.qa_flag_ove
 """
 
 # ============================================================
+# SOP EXTRACTION — DRAFT PROPOSALS
+# ============================================================
+
+_DRAFT_TAXONOMY_PROPOSALS_DDL = """
+CREATE TABLE IF NOT EXISTS kirana_kart.draft_taxonomy_proposals (
+    id                      SERIAL PRIMARY KEY,
+    kb_id                   TEXT NOT NULL
+                                REFERENCES kirana_kart.knowledge_bases(kb_id) ON DELETE CASCADE,
+    entity_id               TEXT NOT NULL,          -- links to the KB version / upload being worked on
+    issue_code              VARCHAR(80) NOT NULL,
+    label                   VARCHAR(255) NOT NULL,
+    description             TEXT,
+    parent_code             VARCHAR(80),             -- NULL = L1 root node
+    level                   INTEGER NOT NULL CHECK (level BETWEEN 1 AND 4),
+    proposal_type           TEXT NOT NULL DEFAULT 'new'
+                                CHECK (proposal_type IN ('new', 'update', 'existing')),
+    status                  TEXT NOT NULL DEFAULT 'pending'
+                                CHECK (status IN ('pending', 'accepted', 'rejected', 'edited')),
+    llm_output              JSONB,                   -- raw LLM extraction for this node
+    user_output             JSONB,                   -- what user changed it to (NULL = accepted as-is)
+    edit_reason             TEXT,                    -- required when status = rejected | edited
+    extraction_confidence   FLOAT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    edited_at               TIMESTAMPTZ,
+    edited_by               INTEGER REFERENCES kirana_kart.users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_draft_tax_kb_entity ON kirana_kart.draft_taxonomy_proposals(kb_id, entity_id);
+CREATE INDEX IF NOT EXISTS idx_draft_tax_status     ON kirana_kart.draft_taxonomy_proposals(status);
+"""
+
+_DRAFT_ACTION_PROPOSALS_DDL = """
+CREATE TABLE IF NOT EXISTS kirana_kart.draft_action_proposals (
+    id                      SERIAL PRIMARY KEY,
+    kb_id                   TEXT NOT NULL
+                                REFERENCES kirana_kart.knowledge_bases(kb_id) ON DELETE CASCADE,
+    entity_id               TEXT NOT NULL,
+    action_code_id          VARCHAR(100) NOT NULL,
+    action_name             VARCHAR(255) NOT NULL,
+    action_description      TEXT,
+    exact_action            TEXT,                    -- the precise step-by-step action to execute
+    parent_issue_codes      TEXT[] NOT NULL DEFAULT '{}', -- taxonomy codes that trigger this action
+    requires_refund         BOOLEAN NOT NULL DEFAULT FALSE,
+    requires_escalation     BOOLEAN NOT NULL DEFAULT FALSE,
+    automation_eligible     BOOLEAN NOT NULL DEFAULT TRUE,
+    proposal_type           TEXT NOT NULL DEFAULT 'new'
+                                CHECK (proposal_type IN ('new', 'update', 'existing')),
+    status                  TEXT NOT NULL DEFAULT 'pending'
+                                CHECK (status IN ('pending', 'accepted', 'rejected', 'edited')),
+    llm_output              JSONB,
+    user_output             JSONB,
+    edit_reason             TEXT,
+    extraction_confidence   FLOAT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    edited_at               TIMESTAMPTZ,
+    edited_by               INTEGER REFERENCES kirana_kart.users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_draft_act_kb_entity ON kirana_kart.draft_action_proposals(kb_id, entity_id);
+CREATE INDEX IF NOT EXISTS idx_draft_act_status     ON kirana_kart.draft_action_proposals(status);
+"""
+
+_EXTRACTION_STANDARDS_DDL = """
+CREATE TABLE IF NOT EXISTS kirana_kart.extraction_standards (
+    id              SERIAL PRIMARY KEY,
+    kb_id           TEXT NOT NULL UNIQUE
+                        REFERENCES kirana_kart.knowledge_bases(kb_id) ON DELETE CASCADE,
+    standards_md    TEXT NOT NULL DEFAULT '',
+    version         INTEGER NOT NULL DEFAULT 1,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_by      INTEGER REFERENCES kirana_kart.users(id) ON DELETE SET NULL
+);
+
+-- Seed one row per existing KB
+INSERT INTO kirana_kart.extraction_standards (kb_id, standards_md)
+SELECT kb_id, ''
+FROM kirana_kart.knowledge_bases
+ON CONFLICT (kb_id) DO NOTHING;
+"""
+
+_RULE_EDIT_LOG_DDL = """
+CREATE TABLE IF NOT EXISTS kirana_kart.rule_edit_log (
+    id                      SERIAL PRIMARY KEY,
+    kb_id                   TEXT NOT NULL DEFAULT 'default',
+    entity_id               TEXT,                   -- SOP version this edit belongs to
+    stage                   TEXT NOT NULL           -- 'taxonomy' | 'action' | 'rule'
+                                CHECK (stage IN ('taxonomy', 'action', 'rule')),
+    item_ref                TEXT,                   -- issue_code | action_code_id | rule_id
+    edit_type               TEXT NOT NULL           -- 'accepted' | 'edited' | 'rejected' | 'manual_add'
+                                CHECK (edit_type IN ('accepted', 'edited', 'rejected', 'manual_add')),
+    llm_output              JSONB,
+    user_output             JSONB,
+    edit_reason             TEXT,
+    extraction_confidence   FLOAT,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by              INTEGER REFERENCES kirana_kart.users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_rule_edit_log_kb       ON kirana_kart.rule_edit_log(kb_id);
+CREATE INDEX IF NOT EXISTS idx_rule_edit_log_entity   ON kirana_kart.rule_edit_log(entity_id);
+CREATE INDEX IF NOT EXISTS idx_rule_edit_log_stage    ON kirana_kart.rule_edit_log(stage);
+"""
+
+# Add exact_action column to master_action_codes if missing
+_ACTION_CODES_ENHANCE = """
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='kirana_kart' AND table_name='master_action_codes'
+          AND column_name='exact_action'
+    ) THEN
+        ALTER TABLE kirana_kart.master_action_codes ADD COLUMN exact_action TEXT;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema='kirana_kart' AND table_name='master_action_codes'
+          AND column_name='parent_issue_codes'
+    ) THEN
+        ALTER TABLE kirana_kart.master_action_codes ADD COLUMN parent_issue_codes TEXT[] DEFAULT '{}';
+    END IF;
+END $$;
+"""
+
+# ============================================================
 # AGENT DECISION FEEDBACK (future ML training loop)
 # ============================================================
 
@@ -372,6 +497,22 @@ def ensure_bpm_tables(engine: Engine) -> None:
         # -- Agent feedback --
         logger.info("BPM tables: creating agent_decision_feedback...")
         conn.execute(text(_AGENT_DECISION_FEEDBACK_DDL))
+
+        # -- SOP extraction draft proposals --
+        logger.info("BPM tables: creating draft_taxonomy_proposals...")
+        conn.execute(text(_DRAFT_TAXONOMY_PROPOSALS_DDL))
+
+        logger.info("BPM tables: creating draft_action_proposals...")
+        conn.execute(text(_DRAFT_ACTION_PROPOSALS_DDL))
+
+        logger.info("BPM tables: creating extraction_standards...")
+        conn.execute(text(_EXTRACTION_STANDARDS_DDL))
+
+        logger.info("BPM tables: creating rule_edit_log...")
+        conn.execute(text(_RULE_EDIT_LOG_DDL))
+
+        logger.info("BPM tables: enhancing master_action_codes...")
+        conn.execute(text(_ACTION_CODES_ENHANCE))
 
     logger.info("BPM tables bootstrap complete.")
 

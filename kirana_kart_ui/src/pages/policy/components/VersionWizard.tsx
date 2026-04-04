@@ -1,23 +1,32 @@
 /**
- * VersionWizard — 5-step guided flow for creating a new policy version.
+ * VersionWizard — 7-step guided flow for creating a new policy version.
  *
- * Step 1 — Upload Document (drag & drop PDF/DOCX/MD/CSV)
- * Step 2 — AI Analysis (compile + vectorize, auto-runs)
- * Step 3 — Review Rules (plain-English rule cards, basic edit)
- * Step 4 — Preview Impact (simulation gate status)
- * Step 5 — Publish (final confirmation with shadow gate status)
+ * Step 1 — Upload Document
+ * Step 2 — AI Analysis (extract taxonomy from SOP)
+ * Step 3 — Taxonomy Review (accept / edit / reject each issue node)
+ * Step 4 — Action Review (accept / edit / reject each extracted action)
+ * Step 5 — Rules Review (deterministically generated rules, inline editing)
+ * Step 6 — Preview (simple simulation)
+ * Step 7 — Publish
  */
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   X, Upload, FileText, FileType, CheckCircle2, Loader2,
   AlertTriangle, ArrowRight, ArrowLeft, Sparkles, BarChart2,
-  Rocket, CloudUpload, Pencil, Trash2, Plus, Save,
+  Rocket, CloudUpload, Pencil, Trash2, Plus, Save, Check, XCircle,
+  ChevronRight, Tag, Zap,
 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { governanceClient as apiClient } from '@/api/clients'
-import { bpmApi, type BPMInstance } from '@/api/governance/bpm.api'
+import {
+  bpmApi,
+  type BPMInstance,
+  type TaxonomyProposal,
+  type ActionProposal,
+  type ReviewProposalPayload,
+} from '@/api/governance/bpm.api'
 
 interface Props {
   kbId: string
@@ -25,9 +34,11 @@ interface Props {
   onCreated: () => void
 }
 
-type Step = 1 | 2 | 3 | 4 | 5
+type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7
 
-// ---- API helpers ----
+// ============================================================
+// API helpers
+// ============================================================
 
 const uploadDocument = (kbId: string, file: File) => {
   const form = new FormData()
@@ -37,9 +48,6 @@ const uploadDocument = (kbId: string, file: File) => {
     { headers: { 'Content-Type': 'multipart/form-data' } },
   )
 }
-
-const triggerCompile = (kbId: string, entityId: string) =>
-  apiClient.post<{ message: string; entity_id: string }>(`/bpm/kb/${kbId}/compile`, { entity_id: entityId })
 
 const fetchRules = (kbId: string, version: string) =>
   apiClient.get<Array<{
@@ -58,14 +66,18 @@ const fetchRules = (kbId: string, version: string) =>
 const publishVersion = (kbId: string, entityId: string) =>
   apiClient.post(`/bpm/kb/${kbId}/publish`, { entity_id: entityId })
 
-// ---- Step progress indicator ----
+// ============================================================
+// Step indicator
+// ============================================================
 
 const STEPS = [
   { n: 1, label: 'Upload' },
   { n: 2, label: 'AI Analysis' },
-  { n: 3, label: 'Review Rules' },
-  { n: 4, label: 'Preview Impact' },
-  { n: 5, label: 'Publish' },
+  { n: 3, label: 'Taxonomy' },
+  { n: 4, label: 'Actions' },
+  { n: 5, label: 'Rules' },
+  { n: 6, label: 'Preview' },
+  { n: 7, label: 'Publish' },
 ]
 
 function StepIndicator({ current }: { current: Step }) {
@@ -75,17 +87,17 @@ function StepIndicator({ current }: { current: Step }) {
         <div key={s.n} className="flex items-center">
           <div className="flex flex-col items-center gap-1">
             <div className={cn(
-              'w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold border-2 transition-all',
+              'w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold border-2 transition-all',
               s.n < current
                 ? 'bg-green-500 border-green-500 text-white'
                 : s.n === current
                   ? 'bg-brand-600 border-brand-600 text-white'
                   : 'bg-surface border-surface-border text-muted',
             )}>
-              {s.n < current ? <CheckCircle2 className="w-4 h-4" /> : s.n}
+              {s.n < current ? <CheckCircle2 className="w-3.5 h-3.5" /> : s.n}
             </div>
             <span className={cn(
-              'text-xs whitespace-nowrap',
+              'text-[10px] whitespace-nowrap',
               s.n === current ? 'text-brand-600 font-medium' : 'text-muted',
             )}>
               {s.label}
@@ -93,7 +105,7 @@ function StepIndicator({ current }: { current: Step }) {
           </div>
           {i < STEPS.length - 1 && (
             <div className={cn(
-              'w-12 h-0.5 mb-5 mx-1 transition-colors',
+              'w-8 h-0.5 mb-5 mx-0.5 transition-colors',
               s.n < current ? 'bg-green-400' : 'bg-surface-border',
             )} />
           )}
@@ -103,7 +115,15 @@ function StepIndicator({ current }: { current: Step }) {
   )
 }
 
-// ---- Step 1: Upload ----
+// ============================================================
+// Shared input style
+// ============================================================
+
+const inp = 'w-full px-2.5 py-1.5 rounded-lg border border-surface-border bg-surface text-sm text-foreground placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-brand-500'
+
+// ============================================================
+// Step 1 — Upload
+// ============================================================
 
 const ACCEPTED = '.pdf,.docx,.md,.txt,.csv'
 
@@ -121,30 +141,22 @@ function UploadStep({
 
   const uploadMutation = useMutation({
     mutationFn: (f: File) => uploadDocument(kbId, f),
-    onSuccess: (res) => {
-      onNext(res.data.entity_id, res.data.filename)
-    },
+    onSuccess: (res) => onNext(res.data.entity_id, res.data.filename),
     onError: (e: Error) => setError(e.message ?? 'Upload failed. Please try again.'),
   })
 
-  const handleFile = useCallback((f: File) => {
-    setError('')
-    setFile(f)
-  }, [])
-
+  const handleFile = useCallback((f: File) => { setError(''); setFile(f) }, [])
   const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    setDragOver(false)
-    const f = e.dataTransfer.files[0]
-    if (f) handleFile(f)
+    e.preventDefault(); setDragOver(false)
+    const f = e.dataTransfer.files[0]; if (f) handleFile(f)
   }
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold text-foreground">Upload your policy document</h2>
+        <h2 className="text-lg font-semibold text-foreground">Upload your SOP document</h2>
         <p className="text-sm text-muted mt-1">
-          Supports PDF, Word (.docx), Markdown, plain text, or CSV (for direct rule import).
+          The AI will read your document and extract issue types and actions in stages — each stage is reviewable before the next begins.
         </p>
       </div>
 
@@ -177,7 +189,7 @@ function UploadStep({
           <div className="flex flex-col items-center gap-3">
             <CloudUpload className="w-10 h-10 text-muted" />
             <div>
-              <p className="text-sm font-medium text-foreground">Drag & drop your document here</p>
+              <p className="text-sm font-medium text-foreground">Drag & drop your SOP document here</p>
               <p className="text-xs text-muted mt-1">or click to browse files</p>
             </div>
             <p className="text-xs text-subtle">PDF · Word · Markdown · CSV</p>
@@ -188,7 +200,7 @@ function UploadStep({
       {file?.name.endsWith('.csv') && (
         <div className="flex items-start gap-2 bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-700 rounded-lg p-3 text-sm text-blue-700 dark:text-blue-300">
           <FileType className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>CSV detected — rules will be imported directly without AI analysis. Column headers must match rule fields.</span>
+          <span>CSV detected — rules will be imported directly without AI analysis.</span>
         </div>
       )}
 
@@ -200,9 +212,7 @@ function UploadStep({
       )}
 
       <div className="flex justify-between items-center">
-        <p className="text-xs text-muted">
-          Maximum file size: 20 MB
-        </p>
+        <p className="text-xs text-muted">Maximum file size: 20 MB</p>
         <button
           disabled={!file || uploadMutation.isPending}
           onClick={() => file && uploadMutation.mutate(file)}
@@ -219,9 +229,11 @@ function UploadStep({
   )
 }
 
-// ---- Step 2: AI Analysis ----
+// ============================================================
+// Step 2 — AI Analysis (extract taxonomy)
+// ============================================================
 
-type CompileStatus = 'idle' | 'running' | 'done' | 'error'
+type AnalysisStatus = 'idle' | 'running' | 'done' | 'error'
 
 function AIAnalysisStep({
   kbId,
@@ -233,52 +245,52 @@ function AIAnalysisStep({
   kbId: string
   entityId: string
   filename: string
-  onNext: () => void
+  onNext: (count: number) => void
   onBack: () => void
 }) {
-  const [status, setStatus] = useState<CompileStatus>('idle')
+  const [status, setStatus] = useState<AnalysisStatus>('idle')
   const [progress, setProgress] = useState(0)
   const [findings, setFindings] = useState<string[]>([])
   const [error, setError] = useState('')
 
-  const compileMutation = useMutation({
-    mutationFn: () => triggerCompile(kbId, entityId),
+  const extractMut = useMutation({
+    mutationFn: () => bpmApi.extractTaxonomy(kbId, entityId),
     onMutate: () => {
-      setStatus('running')
-      setProgress(0)
-      setFindings([])
-      // Animate progress
+      setStatus('running'); setProgress(0); setFindings([])
       let p = 0
       const interval = setInterval(() => {
-        p += Math.random() * 12
-        if (p >= 90) { clearInterval(interval); p = 90 }
-        setProgress(Math.min(p, 90))
+        p += Math.random() * 10
+        if (p >= 88) { clearInterval(interval); p = 88 }
+        setProgress(Math.min(p, 88))
       }, 400)
       return { interval }
     },
-    onSuccess: (_, __, context) => {
+    onSuccess: (res, _, context) => {
       clearInterval((context as { interval: ReturnType<typeof setInterval> }).interval)
-      setProgress(100)
-      setStatus('done')
+      setProgress(100); setStatus('done')
+      const proposals = res.data
+      const newCount = proposals.filter((p: TaxonomyProposal) => p.proposal_type === 'new').length
+      const existingCount = proposals.filter((p: TaxonomyProposal) => p.proposal_type === 'existing').length
       setFindings([
-        'Rules extracted from document',
-        'Mapped to action categories',
-        'Indexed for search',
-      ])
+        `${proposals.length} issue categories identified`,
+        newCount > 0 ? `${newCount} new categories to review` : 'All categories already in registry',
+        existingCount > 0 ? `${existingCount} matched to existing taxonomy` : '',
+        'Ready for your review',
+      ].filter(Boolean))
+      onNext(proposals.length)
     },
     onError: (e: Error, _, context) => {
       clearInterval((context as { interval: ReturnType<typeof setInterval> }).interval)
-      setStatus('error')
-      setError(e.message ?? 'Analysis failed. Please try again.')
+      setStatus('error'); setError(e.message ?? 'Analysis failed. Please try again.')
     },
   })
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold text-foreground">AI Analysis</h2>
+        <h2 className="text-lg font-semibold text-foreground">AI Analysis — Stage 1</h2>
         <p className="text-sm text-muted mt-1">
-          Our AI reads your document and extracts policy rules automatically.
+          The AI reads your SOP and identifies all issue types and their hierarchy.
         </p>
       </div>
 
@@ -290,14 +302,14 @@ function AIAnalysisStep({
 
         {status === 'idle' && (
           <p className="text-sm text-muted text-center py-4">
-            Click the button below to start AI analysis.
+            Click below to start extracting the issue taxonomy from your document.
           </p>
         )}
 
         {(status === 'running' || status === 'done') && (
           <div className="space-y-3">
             <div className="flex justify-between text-xs text-muted mb-1">
-              <span>{status === 'done' ? 'Analysis complete' : 'Analyzing document...'}</span>
+              <span>{status === 'done' ? 'Extraction complete' : 'Analyzing document...'}</span>
               <span>{Math.round(progress)}%</span>
             </div>
             <div className="h-2 bg-surface rounded-full overflow-hidden">
@@ -306,7 +318,6 @@ function AIAnalysisStep({
                 style={{ width: `${progress}%` }}
               />
             </div>
-
             {findings.length > 0 && (
               <div className="mt-4 space-y-1.5">
                 {findings.map((f) => (
@@ -338,22 +349,22 @@ function AIAnalysisStep({
 
         {status !== 'done' ? (
           <button
-            onClick={() => compileMutation.mutate()}
+            onClick={() => extractMut.mutate()}
             disabled={status === 'running'}
             className="flex items-center gap-2 px-5 py-2.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-40 transition-colors"
           >
             {status === 'running' ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /> Analyzing...</>
+              <><Loader2 className="w-4 h-4 animate-spin" /> Extracting taxonomy...</>
             ) : (
-              <><Sparkles className="w-4 h-4" /> {status === 'error' ? 'Retry Analysis' : 'Start AI Analysis'}</>
+              <><Sparkles className="w-4 h-4" /> {status === 'error' ? 'Retry' : 'Extract Issue Taxonomy'}</>
             )}
           </button>
         ) : (
           <button
-            onClick={onNext}
+            onClick={() => onNext(0)}
             className="flex items-center gap-2 px-5 py-2.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 transition-colors"
           >
-            Review Rules <ArrowRight className="w-4 h-4" />
+            Review Taxonomy <ArrowRight className="w-4 h-4" />
           </button>
         )}
       </div>
@@ -361,7 +372,540 @@ function AIAnalysisStep({
   )
 }
 
-// ---- Step 3: Review & Edit Rules (inline) ----
+// ============================================================
+// Step 3 — Taxonomy Review
+// ============================================================
+
+type ProposalStatus = 'pending' | 'accepted' | 'rejected' | 'edited'
+
+function statusBadge(status: ProposalStatus) {
+  if (status === 'accepted' || status === 'edited')
+    return <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 font-medium">Accepted</span>
+  if (status === 'rejected')
+    return <span className="text-xs px-1.5 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-500 font-medium">Rejected</span>
+  return <span className="text-xs px-1.5 py-0.5 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 font-medium">Pending</span>
+}
+
+function typeBadge(type: string) {
+  if (type === 'new') return <span className="text-xs px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600">New</span>
+  if (type === 'update') return <span className="text-xs px-1.5 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-500">Update</span>
+  return <span className="text-xs px-1.5 py-0.5 rounded-full bg-surface text-muted border border-surface-border">Existing</span>
+}
+
+function TaxonomyProposalRow({
+  proposal,
+  kbId,
+  onUpdated,
+}: {
+  proposal: TaxonomyProposal
+  kbId: string
+  onUpdated: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [label, setLabel] = useState(proposal.label)
+  const [description, setDescription] = useState(proposal.description ?? '')
+
+  const reviewMut = useMutation({
+    mutationFn: (payload: ReviewProposalPayload) =>
+      bpmApi.reviewTaxonomyProposal(kbId, proposal.id, payload),
+    onSuccess: () => { setEditing(false); onUpdated() },
+  })
+
+  const accept = () => reviewMut.mutate({ status: 'accepted' })
+  const reject = () => reviewMut.mutate({ status: 'rejected' })
+  const saveEdit = () => reviewMut.mutate({
+    status: 'edited',
+    edit_reason: 'User correction',
+    user_output: { label, description },
+  })
+
+  const indent = proposal.level * 20
+
+  return (
+    <div
+      className={cn(
+        'border rounded-xl p-3 transition-colors',
+        proposal.status === 'rejected'
+          ? 'border-surface-border bg-surface opacity-60'
+          : proposal.status === 'accepted' || proposal.status === 'edited'
+            ? 'border-green-200 dark:border-green-700/50 bg-green-50/40 dark:bg-green-900/10'
+            : 'border-surface-border bg-surface-card',
+      )}
+      style={{ marginLeft: indent }}
+    >
+      {editing ? (
+        <div className="space-y-2">
+          <div>
+            <label className="text-xs text-muted mb-0.5 block">Label</label>
+            <input className={inp} value={label} onChange={e => setLabel(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-muted mb-0.5 block">Description</label>
+            <input className={inp} value={description} onChange={e => setDescription(e.target.value)} placeholder="Optional description" />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => setEditing(false)} className="px-3 py-1 text-xs border border-surface-border rounded-lg text-foreground hover:bg-surface">Cancel</button>
+            <button
+              onClick={saveEdit}
+              disabled={reviewMut.isPending || !label}
+              className="flex items-center gap-1 px-3 py-1 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-40"
+            >
+              <Save className="w-3 h-3" /> {reviewMut.isPending ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          {proposal.level > 0 && <ChevronRight className="w-3 h-3 text-muted shrink-0" />}
+          <Tag className="w-3.5 h-3.5 text-muted shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-sm font-medium text-foreground">{proposal.label}</span>
+              <span className="text-xs font-mono text-muted">{proposal.issue_code}</span>
+              {typeBadge(proposal.proposal_type)}
+              {statusBadge(proposal.status)}
+              {proposal.extraction_confidence != null && (
+                <span className="text-xs text-muted">
+                  {Math.round(proposal.extraction_confidence * 100)}% confidence
+                </span>
+              )}
+            </div>
+            {proposal.description && (
+              <p className="text-xs text-muted mt-0.5 truncate">{proposal.description}</p>
+            )}
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            {proposal.status !== 'rejected' && proposal.status !== 'accepted' && proposal.status !== 'edited' && (
+              <button
+                onClick={accept}
+                disabled={reviewMut.isPending}
+                className="p-1.5 rounded-lg text-muted hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                title="Accept"
+              >
+                <Check className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {(proposal.status === 'accepted' || proposal.status === 'edited') && (
+              <button
+                onClick={reject}
+                disabled={reviewMut.isPending}
+                className="p-1.5 rounded-lg text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors"
+                title="Reject"
+              >
+                <XCircle className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {proposal.status === 'rejected' && (
+              <button
+                onClick={accept}
+                disabled={reviewMut.isPending}
+                className="p-1.5 rounded-lg text-muted hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                title="Restore"
+              >
+                <Check className="w-3.5 h-3.5" />
+              </button>
+            )}
+            <button
+              onClick={() => setEditing(true)}
+              className="p-1.5 rounded-lg text-muted hover:text-brand-500 hover:bg-surface transition-colors"
+              title="Edit"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TaxonomyReviewStep({
+  kbId,
+  entityId,
+  onNext,
+  onBack,
+}: {
+  kbId: string
+  entityId: string
+  onNext: () => void
+  onBack: () => void
+}) {
+  const qc = useQueryClient()
+  const qKey = ['taxonomy-proposals', kbId, entityId]
+  const { data: proposals = [], isLoading } = useQuery({
+    queryKey: qKey,
+    queryFn: () => bpmApi.listTaxonomyProposals(kbId, entityId).then(r => r.data),
+  })
+
+  const refresh = () => qc.invalidateQueries({ queryKey: qKey })
+
+  const sorted = [...proposals].sort((a, b) => a.level - b.level || a.issue_code.localeCompare(b.issue_code))
+  const accepted = proposals.filter((p: TaxonomyProposal) => p.status === 'accepted' || p.status === 'edited').length
+  const pending = proposals.filter((p: TaxonomyProposal) => p.status === 'pending').length
+
+  const acceptAll = useMutation({
+    mutationFn: async () => {
+      const pendingProposals = (proposals as TaxonomyProposal[]).filter(p => p.status === 'pending')
+      for (const p of pendingProposals) {
+        await bpmApi.reviewTaxonomyProposal(kbId, p.id, { status: 'accepted' })
+      }
+    },
+    onSuccess: refresh,
+  })
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">Review Issue Taxonomy</h2>
+          <p className="text-sm text-muted mt-1">
+            These issue categories were extracted from your SOP. Accept, edit, or reject each one.
+            Accepted categories form the foundation of your rules.
+          </p>
+        </div>
+        {pending > 0 && (
+          <button
+            onClick={() => acceptAll.mutate()}
+            disabled={acceptAll.isPending}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-700 rounded-lg hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors disabled:opacity-40"
+          >
+            <Check className="w-3 h-3" /> Accept all ({pending})
+          </button>
+        )}
+      </div>
+
+      {proposals.length > 0 && (
+        <div className="flex items-center gap-3 text-xs text-muted">
+          <span className="text-green-600 font-medium">{accepted} accepted</span>
+          <span>·</span>
+          <span>{pending} pending</span>
+          <span>·</span>
+          <span>{proposals.filter((p: TaxonomyProposal) => p.status === 'rejected').length} rejected</span>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="flex justify-center py-10">
+          <Loader2 className="w-6 h-6 animate-spin text-brand-500" />
+        </div>
+      ) : sorted.length === 0 ? (
+        <div className="text-center py-8 text-sm text-muted">
+          No proposals found. Go back and run AI analysis first.
+        </div>
+      ) : (
+        <div className="space-y-1.5 max-h-[400px] overflow-y-auto pr-1">
+          {sorted.map((p: TaxonomyProposal) => (
+            <TaxonomyProposalRow
+              key={p.id}
+              proposal={p}
+              kbId={kbId}
+              onUpdated={refresh}
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="flex justify-between pt-1">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-2 px-4 py-2 text-sm border border-surface-border rounded-lg text-foreground hover:bg-surface transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" /> Back
+        </button>
+        <button
+          onClick={onNext}
+          disabled={accepted === 0}
+          className="flex items-center gap-2 px-5 py-2.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-40 transition-colors"
+        >
+          Extract Actions <ArrowRight className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ============================================================
+// Step 4 — Action Review
+// ============================================================
+
+function ActionProposalCard({
+  action,
+  kbId,
+  onUpdated,
+}: {
+  action: ActionProposal
+  kbId: string
+  onUpdated: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [actionName, setActionName] = useState(action.action_name)
+  const [exactAction, setExactAction] = useState(action.exact_action ?? '')
+  const [description, setDescription] = useState(action.action_description ?? '')
+
+  const reviewMut = useMutation({
+    mutationFn: (payload: ReviewProposalPayload) =>
+      bpmApi.reviewActionProposal(kbId, action.id, payload),
+    onSuccess: () => { setEditing(false); onUpdated() },
+  })
+
+  const accept = () => reviewMut.mutate({ status: 'accepted' })
+  const reject = () => reviewMut.mutate({ status: 'rejected' })
+  const saveEdit = () => reviewMut.mutate({
+    status: 'edited',
+    edit_reason: 'User correction',
+    user_output: { action_name: actionName, exact_action: exactAction, action_description: description },
+  })
+
+  const flags = [
+    action.requires_refund && 'Refund',
+    action.requires_escalation && 'Escalation',
+    action.automation_eligible && 'Automatable',
+  ].filter(Boolean) as string[]
+
+  return (
+    <div className={cn(
+      'border rounded-xl p-4 transition-colors',
+      action.status === 'rejected'
+        ? 'border-surface-border bg-surface opacity-60'
+        : action.status === 'accepted' || action.status === 'edited'
+          ? 'border-green-200 dark:border-green-700/50 bg-green-50/40 dark:bg-green-900/10'
+          : 'border-surface-border bg-surface-card',
+    )}>
+      {editing ? (
+        <div className="space-y-2">
+          <div>
+            <label className="text-xs text-muted mb-0.5 block">Action name *</label>
+            <input className={inp} value={actionName} onChange={e => setActionName(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-muted mb-0.5 block">Exact action (what the agent should do)</label>
+            <textarea
+              className={cn(inp, 'min-h-[60px] resize-y')}
+              value={exactAction}
+              onChange={e => setExactAction(e.target.value)}
+              placeholder="e.g. Issue full refund of order amount + ₹100 goodwill credit"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted mb-0.5 block">Description</label>
+            <input className={inp} value={description} onChange={e => setDescription(e.target.value)} />
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => setEditing(false)} className="px-3 py-1.5 text-xs border border-surface-border rounded-lg text-foreground hover:bg-surface">Cancel</button>
+            <button
+              onClick={saveEdit}
+              disabled={reviewMut.isPending || !actionName}
+              className="flex items-center gap-1 px-3 py-1.5 text-xs bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-40"
+            >
+              <Save className="w-3 h-3" /> {reviewMut.isPending ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-start gap-2">
+          <Zap className="w-4 h-4 text-muted shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-sm font-medium text-foreground">{action.action_name}</span>
+              <span className="text-xs font-mono text-muted">{action.action_code_id}</span>
+              {typeBadge(action.proposal_type)}
+              {statusBadge(action.status)}
+            </div>
+            {action.exact_action && (
+              <p className="text-xs text-muted mt-1">{action.exact_action}</p>
+            )}
+            {action.parent_issue_codes.length > 0 && (
+              <div className="flex items-center gap-1 flex-wrap mt-1">
+                <span className="text-xs text-muted">Applies to:</span>
+                {action.parent_issue_codes.slice(0, 3).map(c => (
+                  <span key={c} className="text-xs px-1.5 py-0.5 bg-surface border border-surface-border rounded text-muted">{c}</span>
+                ))}
+                {action.parent_issue_codes.length > 3 && (
+                  <span className="text-xs text-muted">+{action.parent_issue_codes.length - 3} more</span>
+                )}
+              </div>
+            )}
+            {flags.length > 0 && (
+              <div className="flex gap-1 mt-1.5">
+                {flags.map(f => (
+                  <span key={f} className="text-xs px-1.5 py-0.5 bg-amber-50 dark:bg-amber-900/20 text-amber-600 border border-amber-200 dark:border-amber-700 rounded">{f}</span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            {action.status === 'pending' && (
+              <button onClick={accept} disabled={reviewMut.isPending}
+                className="p-1.5 rounded-lg text-muted hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors" title="Accept">
+                <Check className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {(action.status === 'accepted' || action.status === 'edited') && (
+              <button onClick={reject} disabled={reviewMut.isPending}
+                className="p-1.5 rounded-lg text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors" title="Reject">
+                <XCircle className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {action.status === 'rejected' && (
+              <button onClick={accept} disabled={reviewMut.isPending}
+                className="p-1.5 rounded-lg text-muted hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors" title="Restore">
+                <Check className="w-3.5 h-3.5" />
+              </button>
+            )}
+            <button onClick={() => setEditing(true)}
+              className="p-1.5 rounded-lg text-muted hover:text-brand-500 hover:bg-surface transition-colors" title="Edit">
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+type ActionExtractStatus = 'idle' | 'running' | 'done' | 'error'
+
+function ActionReviewStep({
+  kbId,
+  entityId,
+  onNext,
+  onBack,
+}: {
+  kbId: string
+  entityId: string
+  onNext: () => void
+  onBack: () => void
+}) {
+  const qc = useQueryClient()
+  const qKey = ['action-proposals', kbId, entityId]
+  const [extractStatus, setExtractStatus] = useState<ActionExtractStatus>('idle')
+  const [extractError, setExtractError] = useState('')
+
+  const { data: actions = [], isLoading } = useQuery({
+    queryKey: qKey,
+    queryFn: () => bpmApi.listActionProposals(kbId, entityId).then(r => r.data),
+    enabled: extractStatus === 'done',
+  })
+
+  const refresh = () => qc.invalidateQueries({ queryKey: qKey })
+
+  const extractMut = useMutation({
+    mutationFn: () => bpmApi.extractActions(kbId, entityId),
+    onMutate: () => { setExtractStatus('running'); setExtractError('') },
+    onSuccess: () => { setExtractStatus('done'); refresh() },
+    onError: (e: Error) => { setExtractStatus('error'); setExtractError(e.message ?? 'Extraction failed.') },
+  })
+
+  const acceptAll = useMutation({
+    mutationFn: async () => {
+      const pendingActions = (actions as ActionProposal[]).filter(a => a.status === 'pending')
+      for (const a of pendingActions) {
+        await bpmApi.reviewActionProposal(kbId, a.id, { status: 'accepted' })
+      }
+    },
+    onSuccess: refresh,
+  })
+
+  const accepted = (actions as ActionProposal[]).filter(a => a.status === 'accepted' || a.status === 'edited').length
+  const pending = (actions as ActionProposal[]).filter(a => a.status === 'pending').length
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Review Actions — Stage 2</h2>
+        <p className="text-sm text-muted mt-1">
+          The AI extracts every unique action for all issue permutations from your SOP. These actions become your Action Registry — the building blocks of all rules.
+        </p>
+      </div>
+
+      {extractStatus === 'idle' && (
+        <div className="bg-surface-card border border-surface-border rounded-xl p-5 text-center space-y-3">
+          <Zap className="w-8 h-8 text-muted mx-auto" />
+          <p className="text-sm text-muted">Ready to extract actions using the accepted taxonomy.</p>
+          <button
+            onClick={() => extractMut.mutate()}
+            className="flex items-center gap-2 px-5 py-2.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 mx-auto transition-colors"
+          >
+            <Sparkles className="w-4 h-4" /> Extract Actions
+          </button>
+        </div>
+      )}
+
+      {extractStatus === 'running' && (
+        <div className="bg-surface-card border border-surface-border rounded-xl p-5 text-center space-y-3">
+          <Loader2 className="w-8 h-8 text-brand-500 mx-auto animate-spin" />
+          <p className="text-sm text-muted">Extracting actions for all issue permutations...</p>
+        </div>
+      )}
+
+      {extractStatus === 'error' && (
+        <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 dark:bg-red-900/10 border border-red-200 rounded-lg p-3">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          {extractError}
+          <button onClick={() => extractMut.mutate()} className="ml-auto underline text-red-600 text-xs">Retry</button>
+        </div>
+      )}
+
+      {extractStatus === 'done' && (
+        <>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 text-xs text-muted">
+              <span className="text-green-600 font-medium">{accepted} accepted</span>
+              <span>·</span>
+              <span>{pending} pending</span>
+            </div>
+            {pending > 0 && (
+              <button
+                onClick={() => acceptAll.mutate()}
+                disabled={acceptAll.isPending}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-700 rounded-lg hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors disabled:opacity-40"
+              >
+                <Check className="w-3 h-3" /> Accept all ({pending})
+              </button>
+            )}
+          </div>
+
+          {isLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-brand-500" />
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+              {(actions as ActionProposal[]).map(a => (
+                <ActionProposalCard
+                  key={a.id}
+                  action={a}
+                  kbId={kbId}
+                  onUpdated={refresh}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      <div className="flex justify-between pt-1">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-2 px-4 py-2 text-sm border border-surface-border rounded-lg text-foreground hover:bg-surface transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" /> Back
+        </button>
+        <button
+          onClick={onNext}
+          disabled={accepted === 0}
+          className="flex items-center gap-2 px-5 py-2.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-40 transition-colors"
+        >
+          Generate Rules <ArrowRight className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ============================================================
+// Step 5 — Rules Review (inline editing)
+// ============================================================
 
 type Rule = {
   id: number
@@ -435,23 +979,21 @@ function RuleCard({
     onSuccess: onDeleted,
   })
 
-  const inp = 'w-full px-2.5 py-1.5 rounded-lg border border-surface-border bg-surface text-sm text-foreground placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-brand-500'
-
   if (editing) {
     return (
       <div className="bg-surface-card border border-brand-500/40 rounded-xl p-4 space-y-3">
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="text-xs text-muted mb-0.5 block">Issue type (level 1) *</label>
+            <label className="text-xs text-muted mb-0.5 block">Issue type (L1) *</label>
             <input className={inp} value={draft.issue_type_l1}
               onChange={e => setDraft(d => ({ ...d, issue_type_l1: e.target.value }))}
-              placeholder="e.g. Food Safety" />
+              placeholder="e.g. FOOD_SAFETY" />
           </div>
           <div>
-            <label className="text-xs text-muted mb-0.5 block">Sub-type (level 2)</label>
+            <label className="text-xs text-muted mb-0.5 block">Sub-type (L2)</label>
             <input className={inp} value={draft.issue_type_l2}
               onChange={e => setDraft(d => ({ ...d, issue_type_l2: e.target.value }))}
-              placeholder="e.g. Foreign Object" />
+              placeholder="e.g. FOREIGN_OBJECT" />
           </div>
         </div>
         <div>
@@ -462,18 +1004,18 @@ function RuleCard({
         </div>
         <div className="grid grid-cols-3 gap-2">
           <div>
-            <label className="text-xs text-muted mb-0.5 block">Priority (1–999)</label>
+            <label className="text-xs text-muted mb-0.5 block">Priority</label>
             <input className={inp} type="number" min={1} max={999} value={draft.priority}
               onChange={e => setDraft(d => ({ ...d, priority: parseInt(e.target.value) || 50 }))} />
           </div>
           <div>
-            <label className="text-xs text-muted mb-0.5 block">Min order value (₹)</label>
+            <label className="text-xs text-muted mb-0.5 block">Min order (₹)</label>
             <input className={inp} type="number" value={draft.min_order_value}
               onChange={e => setDraft(d => ({ ...d, min_order_value: e.target.value }))}
               placeholder="Any" />
           </div>
           <div>
-            <label className="text-xs text-muted mb-0.5 block">Max order value (₹)</label>
+            <label className="text-xs text-muted mb-0.5 block">Max order (₹)</label>
             <input className={inp} type="number" value={draft.max_order_value}
               onChange={e => setDraft(d => ({ ...d, max_order_value: e.target.value }))}
               placeholder="Any" />
@@ -510,9 +1052,7 @@ function RuleCard({
               Priority {rule.priority}
             </span>
             {rule.deterministic && (
-              <span className="text-xs text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-0.5 rounded-full">
-                Auto
-              </span>
+              <span className="text-xs text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-0.5 rounded-full">Auto</span>
             )}
           </div>
           <p className="text-sm font-medium text-foreground mt-1.5">{rule.action_name}</p>
@@ -527,8 +1067,7 @@ function RuleCard({
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <button onClick={() => setEditing(true)}
-            className="p-1.5 rounded-lg text-muted hover:text-brand-500 hover:bg-surface transition-colors"
-            title="Edit rule">
+            className="p-1.5 rounded-lg text-muted hover:text-brand-500 hover:bg-surface transition-colors" title="Edit rule">
             <Pencil className="w-3.5 h-3.5" />
           </button>
           <button
@@ -573,8 +1112,6 @@ function AddRuleCard({
     onError: () => setErr('Could not add rule. Please fill in all required fields.'),
   })
 
-  const inp = 'w-full px-2.5 py-1.5 rounded-lg border border-surface-border bg-surface text-sm text-foreground placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-brand-500'
-
   if (!open) {
     return (
       <button
@@ -591,16 +1128,16 @@ function AddRuleCard({
       <p className="text-sm font-semibold text-foreground">New Rule</p>
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="text-xs text-muted mb-0.5 block">Issue type (level 1) *</label>
+          <label className="text-xs text-muted mb-0.5 block">Issue type (L1) *</label>
           <input className={inp} value={draft.issue_type_l1}
             onChange={e => setDraft(d => ({ ...d, issue_type_l1: e.target.value }))}
-            placeholder="e.g. Food Safety" />
+            placeholder="e.g. FOOD_SAFETY" />
         </div>
         <div>
-          <label className="text-xs text-muted mb-0.5 block">Sub-type (level 2)</label>
+          <label className="text-xs text-muted mb-0.5 block">Sub-type (L2)</label>
           <input className={inp} value={draft.issue_type_l2}
             onChange={e => setDraft(d => ({ ...d, issue_type_l2: e.target.value }))}
-            placeholder="e.g. Foreign Object" />
+            placeholder="e.g. FOREIGN_OBJECT" />
         </div>
       </div>
       <div>
@@ -611,18 +1148,18 @@ function AddRuleCard({
       </div>
       <div className="grid grid-cols-3 gap-2">
         <div>
-          <label className="text-xs text-muted mb-0.5 block">Priority (1–999)</label>
+          <label className="text-xs text-muted mb-0.5 block">Priority</label>
           <input className={inp} type="number" min={1} max={999} value={draft.priority}
             onChange={e => setDraft(d => ({ ...d, priority: parseInt(e.target.value) || 50 }))} />
         </div>
         <div>
-          <label className="text-xs text-muted mb-0.5 block">Min order value (₹)</label>
+          <label className="text-xs text-muted mb-0.5 block">Min order (₹)</label>
           <input className={inp} type="number" value={draft.min_order_value}
             onChange={e => setDraft(d => ({ ...d, min_order_value: e.target.value }))}
             placeholder="Any" />
         </div>
         <div>
-          <label className="text-xs text-muted mb-0.5 block">Max order value (₹)</label>
+          <label className="text-xs text-muted mb-0.5 block">Max order (₹)</label>
           <input className={inp} type="number" value={draft.max_order_value}
             onChange={e => setDraft(d => ({ ...d, max_order_value: e.target.value }))}
             placeholder="Any" />
@@ -646,6 +1183,8 @@ function AddRuleCard({
   )
 }
 
+type GenStatus = 'idle' | 'running' | 'done' | 'error'
+
 function ReviewRulesStep({
   kbId,
   entityId,
@@ -659,51 +1198,86 @@ function ReviewRulesStep({
 }) {
   const qc = useQueryClient()
   const qKey = ['rules', kbId, entityId, 'wizard']
+  const [genStatus, setGenStatus] = useState<GenStatus>('idle')
+  const [genError, setGenError] = useState('')
+
   const { data: rules = [], isLoading } = useQuery({
     queryKey: qKey,
-    queryFn: () => fetchRules(kbId, entityId).then((r) => r.data),
+    queryFn: () => fetchRules(kbId, entityId).then(r => r.data),
+    enabled: genStatus === 'done',
   })
 
   const refresh = () => qc.invalidateQueries({ queryKey: qKey })
 
+  const generateMut = useMutation({
+    mutationFn: () => bpmApi.generateRules(kbId, entityId),
+    onMutate: () => { setGenStatus('running'); setGenError('') },
+    onSuccess: () => { setGenStatus('done'); refresh() },
+    onError: (e: Error) => { setGenStatus('error'); setGenError(e.message ?? 'Generation failed.') },
+  })
+
+  // Auto-generate on mount
+  useEffect(() => {
+    generateMut.mutate()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-lg font-semibold text-foreground">Review & Edit Rules</h2>
+        <h2 className="text-lg font-semibold text-foreground">Review Rules — Stage 3</h2>
         <p className="text-sm text-muted mt-1">
-          These rules were extracted from your document. Edit, remove, or add rules before running the impact preview.
+          Rules are generated deterministically from the accepted taxonomy × actions. Edit, remove, or add rules as needed.
         </p>
       </div>
 
-      {isLoading ? (
-        <div className="flex justify-center py-10">
-          <Loader2 className="w-6 h-6 animate-spin text-brand-500" />
+      {genStatus === 'running' && (
+        <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted">
+          <Loader2 className="w-5 h-5 animate-spin text-brand-500" />
+          Generating rules from taxonomy × action registry...
         </div>
-      ) : rules.length === 0 ? (
-        <div className="text-center py-6 text-sm text-muted">
-          No rules extracted yet. Complete AI analysis first, or add rules manually below.
+      )}
+
+      {genStatus === 'error' && (
+        <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 dark:bg-red-900/10 border border-red-200 rounded-lg p-3">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          {genError}
+          <button onClick={() => generateMut.mutate()} className="ml-auto underline text-xs">Retry</button>
         </div>
-      ) : (
-        <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
-          {(rules as Rule[]).map((rule) => (
-            <RuleCard
-              key={rule.id}
-              rule={rule}
-              kbId={kbId}
-              onSaved={refresh}
-              onDeleted={refresh}
-            />
-          ))}
-        </div>
+      )}
+
+      {genStatus === 'done' && (
+        <>
+          {isLoading ? (
+            <div className="flex justify-center py-10">
+              <Loader2 className="w-6 h-6 animate-spin text-brand-500" />
+            </div>
+          ) : rules.length === 0 ? (
+            <div className="text-center py-6 text-sm text-muted">
+              No rules generated. Add rules manually below.
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+              {(rules as Rule[]).map((rule) => (
+                <RuleCard
+                  key={rule.id}
+                  rule={rule}
+                  kbId={kbId}
+                  onSaved={refresh}
+                  onDeleted={refresh}
+                />
+              ))}
+            </div>
+          )}
+          {rules.length > 0 && (
+            <p className="text-xs text-muted text-center">
+              {rules.length} rule{rules.length !== 1 ? 's' : ''}
+            </p>
+          )}
+        </>
       )}
 
       <AddRuleCard kbId={kbId} entityId={entityId} onAdded={refresh} />
-
-      {rules.length > 0 && (
-        <p className="text-xs text-muted text-center">
-          {rules.length} rule{rules.length !== 1 ? 's' : ''} · click ✏ to edit, 🗑 to remove
-        </p>
-      )}
 
       <div className="flex justify-between pt-1">
         <button
@@ -714,21 +1288,23 @@ function ReviewRulesStep({
         </button>
         <button
           onClick={onNext}
-          disabled={rules.length === 0}
+          disabled={genStatus !== 'done' || (rules as Rule[]).length === 0}
           className="flex items-center gap-2 px-5 py-2.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-40 transition-colors"
         >
-          Preview Impact <ArrowRight className="w-4 h-4" />
+          Preview <ArrowRight className="w-4 h-4" />
         </button>
       </div>
     </div>
   )
 }
 
-// ---- Step 4: Preview Impact (simulation gate) ----
+// ============================================================
+// Step 6 — Preview (simple)
+// ============================================================
 
 type SimStatus = 'idle' | 'running' | 'passed' | 'failed'
 
-function PreviewImpactStep({
+function PreviewStep({
   kbId,
   entityId,
   onNext,
@@ -763,9 +1339,9 @@ function PreviewImpactStep({
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-lg font-semibold text-foreground">Preview Impact</h2>
+        <h2 className="text-lg font-semibold text-foreground">Preview</h2>
         <p className="text-sm text-muted mt-1">
-          Test how this version would have handled recent tickets before going live.
+          Run a quick preview to see how these rules compare against recent tickets.
         </p>
       </div>
 
@@ -779,32 +1355,26 @@ function PreviewImpactStep({
       )}>
         <div className="flex items-center gap-3 mb-4">
           <BarChart2 className="w-5 h-5 text-muted shrink-0" />
-          <p className="text-sm font-semibold text-foreground">Impact Preview</p>
+          <p className="text-sm font-semibold text-foreground">Preview Results</p>
           {simStatus === 'passed' && (
-            <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 font-medium">
-              Passed
-            </span>
+            <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 font-medium">Passed</span>
           )}
           {simStatus === 'failed' && (
-            <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-600 font-medium">
-              Review needed
-            </span>
+            <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-600 font-medium">Review needed</span>
           )}
         </div>
 
         {simStatus === 'idle' && (
           <p className="text-sm text-muted text-center py-4">
-            Run the preview to see how this version compares to the current active policy.
+            Run the preview to compare this version against the current active policy.
           </p>
         )}
-
         {simStatus === 'running' && (
           <div className="flex flex-col items-center gap-3 py-4">
             <Loader2 className="w-6 h-6 animate-spin text-brand-500" />
             <p className="text-sm text-muted">Testing against recent tickets...</p>
           </div>
         )}
-
         {metrics && (simStatus === 'passed' || simStatus === 'failed') && (
           <div className="space-y-2">
             {Object.entries(metrics).map(([k, v]) => (
@@ -815,7 +1385,7 @@ function PreviewImpactStep({
             ))}
             {simStatus === 'failed' && (
               <p className="text-xs text-red-600 mt-3 pt-2 border-t border-red-200 dark:border-red-700">
-                Large differences found (&gt;20%). Please review the changed rules before publishing.
+                Large differences found (&gt;20%). You may want to review rules before publishing.
               </p>
             )}
           </div>
@@ -829,9 +1399,8 @@ function PreviewImpactStep({
         >
           <ArrowLeft className="w-4 h-4" /> Back
         </button>
-
         <div className="flex gap-2">
-          {simStatus === 'idle' || simStatus === 'failed' ? (
+          {(simStatus === 'idle' || simStatus === 'failed') && (
             <button
               onClick={() => runSimMutation.mutate()}
               disabled={simStatus === 'running' || runSimMutation.isPending}
@@ -840,10 +1409,10 @@ function PreviewImpactStep({
               {runSimMutation.isPending ? (
                 <><Loader2 className="w-4 h-4 animate-spin" /> Running...</>
               ) : (
-                <><BarChart2 className="w-4 h-4" /> {simStatus === 'failed' ? 'Re-run Preview' : 'Run Impact Preview'}</>
+                <><BarChart2 className="w-4 h-4" /> {simStatus === 'failed' ? 'Re-run Preview' : 'Run Preview'}</>
               )}
             </button>
-          ) : null}
+          )}
           {(simStatus === 'passed' || simStatus === 'failed') && (
             <button
               onClick={onNext}
@@ -854,11 +1423,18 @@ function PreviewImpactStep({
                   : 'border border-surface-border text-foreground hover:bg-surface',
               )}
             >
-              {simStatus === 'passed' ? (
-                <>Looks good <ArrowRight className="w-4 h-4" /></>
-              ) : (
-                <>Continue anyway <ArrowRight className="w-4 h-4" /></>
-              )}
+              {simStatus === 'passed'
+                ? <>Looks good <ArrowRight className="w-4 h-4" /></>
+                : <>Continue anyway <ArrowRight className="w-4 h-4" /></>
+              }
+            </button>
+          )}
+          {simStatus === 'idle' && (
+            <button
+              onClick={onNext}
+              className="flex items-center gap-2 px-4 py-2 text-sm border border-surface-border rounded-lg text-foreground hover:bg-surface transition-colors"
+            >
+              Skip <ArrowRight className="w-4 h-4" />
             </button>
           )}
         </div>
@@ -867,7 +1443,9 @@ function PreviewImpactStep({
   )
 }
 
-// ---- Step 5: Publish ----
+// ============================================================
+// Step 7 — Publish
+// ============================================================
 
 function PublishStep({
   kbId,
@@ -883,19 +1461,16 @@ function PublishStep({
   const qc = useQueryClient()
   const { data: rules = [] } = useQuery({
     queryKey: ['rules', kbId, entityId, 'wizard'],
-    queryFn: () => fetchRules(kbId, entityId).then((r) => r.data),
+    queryFn: () => fetchRules(kbId, entityId).then(r => r.data),
   })
 
-  // Poll for shadow gate status
   const { data: instances = [] } = useQuery({
     queryKey: ['bpm', 'instances', kbId, 'wizard'],
-    queryFn: () => bpmApi.listInstances(kbId, { limit: 5 }).then((r) => r.data),
+    queryFn: () => bpmApi.listInstances(kbId, { limit: 5 }).then(r => r.data),
     refetchInterval: 15_000,
   })
 
-  const latestInstance = instances.find(
-    (i: BPMInstance) => i.entity_id === entityId,
-  )
+  const latestInstance = instances.find((i: BPMInstance) => i.entity_id === entityId)
   const shadowDone =
     latestInstance?.current_stage === 'PENDING_APPROVAL' ||
     latestInstance?.current_stage === 'ACTIVE'
@@ -921,11 +1496,15 @@ function PublishStep({
       <div className="bg-surface-card border border-surface-border rounded-xl p-5 space-y-3">
         <div className="flex items-center gap-3 text-sm">
           <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
-          <span className="text-foreground">{rules.length} rules reviewed</span>
+          <span className="text-foreground">Issue taxonomy reviewed</span>
         </div>
         <div className="flex items-center gap-3 text-sm">
           <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
-          <span className="text-foreground">Impact preview complete</span>
+          <span className="text-foreground">Actions reviewed and confirmed</span>
+        </div>
+        <div className="flex items-center gap-3 text-sm">
+          <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
+          <span className="text-foreground">{rules.length} rules ready</span>
         </div>
         <div className="flex items-center gap-3 text-sm">
           {shadowDone ? (
@@ -939,7 +1518,7 @@ function PublishStep({
             {shadowDone
               ? 'Background test complete'
               : shadowInProgress
-                ? 'Background test running (collecting data)...'
+                ? 'Background test running...'
                 : 'Background test pending'}
           </span>
         </div>
@@ -948,7 +1527,7 @@ function PublishStep({
       {shadowInProgress && (
         <div className="flex items-center gap-2 text-sm text-blue-600 bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-700 rounded-lg px-3 py-2">
           <Loader2 className="w-4 h-4 shrink-0 animate-spin" />
-          Background test is still collecting data. You can publish now or wait for it to finish.
+          Background test is collecting data. You can publish now or wait for it to finish.
         </div>
       )}
 
@@ -982,7 +1561,9 @@ function PublishStep({
   )
 }
 
-// ---- Main Wizard ----
+// ============================================================
+// Main Wizard
+// ============================================================
 
 export function VersionWizard({ kbId, onClose, onCreated }: Props) {
   const [step, setStep] = useState<Step>(1)
@@ -990,20 +1571,14 @@ export function VersionWizard({ kbId, onClose, onCreated }: Props) {
   const [filename, setFilename] = useState('')
 
   const handleUploadDone = (eid: string, fname: string) => {
-    setEntityId(eid)
-    setFilename(fname)
-    setStep(2)
+    setEntityId(eid); setFilename(fname); setStep(2)
   }
 
   return (
     <>
-      {/* Scrim */}
       <div className="fixed inset-0 z-40 bg-black/50" onClick={onClose} />
-
-      {/* Modal */}
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="bg-surface-card border border-surface-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-          {/* Header */}
+        <div className="bg-surface-card border border-surface-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto">
           <div className="flex items-center justify-between px-6 py-4 border-b border-surface-border">
             <div>
               <p className="text-xs text-muted font-mono">{kbId}</p>
@@ -1014,7 +1589,6 @@ export function VersionWizard({ kbId, onClose, onCreated }: Props) {
             </button>
           </div>
 
-          {/* Body */}
           <div className="p-6">
             <StepIndicator current={step} />
 
@@ -1031,7 +1605,7 @@ export function VersionWizard({ kbId, onClose, onCreated }: Props) {
               />
             )}
             {step === 3 && (
-              <ReviewRulesStep
+              <TaxonomyReviewStep
                 kbId={kbId}
                 entityId={entityId}
                 onNext={() => setStep(4)}
@@ -1039,7 +1613,7 @@ export function VersionWizard({ kbId, onClose, onCreated }: Props) {
               />
             )}
             {step === 4 && (
-              <PreviewImpactStep
+              <ActionReviewStep
                 kbId={kbId}
                 entityId={entityId}
                 onNext={() => setStep(5)}
@@ -1047,11 +1621,27 @@ export function VersionWizard({ kbId, onClose, onCreated }: Props) {
               />
             )}
             {step === 5 && (
+              <ReviewRulesStep
+                kbId={kbId}
+                entityId={entityId}
+                onNext={() => setStep(6)}
+                onBack={() => setStep(4)}
+              />
+            )}
+            {step === 6 && (
+              <PreviewStep
+                kbId={kbId}
+                entityId={entityId}
+                onNext={() => setStep(7)}
+                onBack={() => setStep(5)}
+              />
+            )}
+            {step === 7 && (
               <PublishStep
                 kbId={kbId}
                 entityId={entityId}
                 onCreated={onCreated}
-                onBack={() => setStep(4)}
+                onBack={() => setStep(6)}
               />
             )}
           </div>
