@@ -26,6 +26,7 @@ from app.admin.services.auth_service import (
     ALL_MODULES,
     UserContext,
     require_permission,
+    hash_password,
 )
 
 router = APIRouter(prefix="/users", tags=["user-management"])
@@ -273,3 +274,33 @@ def delete_user(user_id: int, current_user: UserContext = Depends(_require_admin
         raise HTTPException(status_code=404, detail="User not found")
 
     return {"status": "deleted", "user_id": user_id}
+
+
+# ---------------------------------------------------------------------------
+# Reset password (admin only)
+# ---------------------------------------------------------------------------
+
+class PasswordResetRequest(BaseModel):
+    new_password: str
+
+
+@router.put("/{user_id}/password")
+def reset_user_password(
+    user_id: int,
+    body: PasswordResetRequest,
+    current_user: UserContext = Depends(_require_admin),
+):
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    hashed = hash_password(body.new_password)
+    with get_db_session() as session:
+        row = session.execute(
+            text("UPDATE kirana_kart.users SET password_hash = :h WHERE id = :uid RETURNING id"),
+            {"h": hashed, "uid": user_id},
+        ).scalar()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return {"status": "password_reset", "user_id": user_id}
