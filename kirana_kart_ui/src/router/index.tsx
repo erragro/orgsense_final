@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createBrowserRouter } from 'react-router-dom'
+import { createBrowserRouter, useLocation } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
 import { AuthGuard } from '@/components/layout/AuthGuard'
 import { AccessGuard } from '@/components/layout/AccessGuard'
@@ -15,9 +15,10 @@ const Loading = () => (
   </div>
 )
 
-// Scroll to top whenever a new route mounts
+// Scroll to top on every pathname change (works for SPA navigation)
 const ScrollToTop = ({ children }: { children: React.ReactNode }) => {
-  useEffect(() => { window.scrollTo(0, 0) }, [])
+  const { pathname } = useLocation()
+  useEffect(() => { window.scrollTo(0, 0) }, [pathname])
   return <>{children}</>
 }
 
