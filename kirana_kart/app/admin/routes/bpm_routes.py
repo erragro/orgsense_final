@@ -123,7 +123,7 @@ def _require_kb_access(
         return
     if not _bpm_service.check_kb_access(
         kb_id=kb_id,
-        user_id=user.user_id,
+        user_id=user.id,
         required_role=required_role,
         is_super_admin=user.is_super_admin,
     ):
@@ -142,7 +142,7 @@ def list_kbs(u: UserContext = Depends(_kb_view)):
     """List KBs accessible to the current user."""
     try:
         kbs = _bpm_service.list_kbs(
-            user_id=u.user_id,
+            user_id=u.id,
             is_super_admin=u.is_super_admin,
         )
         return jsonable_encoder(kbs)
@@ -159,7 +159,7 @@ def create_kb(request: CreateKBRequest, u: UserContext = Depends(_sys_admin)):
             kb_id=request.kb_id,
             kb_name=request.kb_name,
             description=request.description,
-            created_by_id=u.user_id,
+            created_by_id=u.id,
         )
         return jsonable_encoder(kb)
     except Exception as e:
@@ -191,7 +191,7 @@ def set_kb_member(
             kb_id=kb_id,
             user_id=request.user_id,
             role=request.role,
-            granted_by_id=u.user_id,
+            granted_by_id=u.id,
         )
         return {"status": "ok", "kb_id": kb_id, "user_id": request.user_id, "role": request.role}
     except Exception as e:
@@ -250,7 +250,7 @@ def create_instance(
             entity_id=request.entity_id,
             entity_type=request.entity_type,
             process_name=request.process_name,
-            created_by_id=u.user_id,
+            created_by_id=u.id,
             created_by_name=u.email,
             metadata=request.metadata,
         )
@@ -288,7 +288,7 @@ def transition_instance(
         instance = _bpm_service.transition(
             instance_id=instance_id,
             to_stage=request.to_stage,
-            actor_id=u.user_id,
+            actor_id=u.id,
             actor_name=u.email,
             notes=request.notes,
             transition_data=request.transition_data,
@@ -347,7 +347,7 @@ def request_approval(
         approval = _bpm_service.request_approval(
             instance_id=instance_id,
             stage=request.stage,
-            requested_by_id=u.user_id,
+            requested_by_id=u.id,
             requested_by=u.email,
         )
         return jsonable_encoder(approval)
@@ -372,7 +372,7 @@ def approve_request(
     try:
         result = _bpm_service.approve(
             approval_id=approval_id,
-            reviewer_id=u.user_id,
+            reviewer_id=u.id,
             reviewer_name=u.email,
             notes=request.notes,
         )
@@ -394,7 +394,7 @@ def reject_request(
     try:
         result = _bpm_service.reject(
             approval_id=approval_id,
-            reviewer_id=u.user_id,
+            reviewer_id=u.id,
             reviewer_name=u.email,
             notes=request.notes,
         )
@@ -484,7 +484,7 @@ async def upload_document_file(
             process_name="kb_policy_lifecycle",
             entity_id=entity_id,
             entity_type="kb_version",
-            created_by_id=u.user_id,
+            created_by_id=u.id,
             created_by_name=u.email,
         )
 
@@ -606,7 +606,7 @@ def publish_version_bpm(
             _bpm_service.transition(
                 instance_id=row["id"],
                 to_stage="ACTIVE",
-                actor_id=u.user_id,
+                actor_id=u.id,
                 actor_name=u.email,
                 notes="Published via wizard",
             )
@@ -666,7 +666,7 @@ def compile_document(
         _bpm_service.transition(
             instance_id=row["id"],
             to_stage="AI_COMPILE_QUEUED",
-            actor_id=u.user_id,
+            actor_id=u.id,
             actor_name=u.email,
             notes="Compilation triggered via wizard",
         )
