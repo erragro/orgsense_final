@@ -111,21 +111,39 @@ def start_background_worker() -> None:
 # FASTAPI LIFESPAN
 # ============================================================
 
+def _run_startup_ddl() -> None:
+    """Run all DDL migrations under a PostgreSQL advisory lock (lock id 88010001).
+    Only one Cloud Run instance will execute the DDL block at a time; others wait."""
+    import time as _time
+    _LOCK_ID = 88010001
+    with engine.connect() as conn:
+        while True:
+            locked = conn.execute(text("SELECT pg_try_advisory_lock(:id)"), {"id": _LOCK_ID}).scalar()
+            if locked:
+                break
+            logger.info("Startup DDL lock held by another instance — waiting 2s...")
+            _time.sleep(2)
+        try:
+            ensure_auth_tables()
+            ensure_bootstrap_admin()
+            ensure_bi_tables()
+            ensure_qa_tables()
+            ensure_schedule_table()
+            ensure_master_action_codes_constraints()
+            ensure_crm_tables()
+            from app.admin.services.crm_automation_engine import seed_cardinal_rules
+            seed_cardinal_rules()
+            ensure_integration_tables()
+            ensure_pii_audit_table()
+            ensure_bpm_tables(engine)
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": _LOCK_ID})
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- Startup ---
-    ensure_auth_tables()
-    ensure_bootstrap_admin()
-    ensure_bi_tables()
-    ensure_qa_tables()
-    ensure_schedule_table()
-    ensure_master_action_codes_constraints()
-    ensure_crm_tables()
-    from app.admin.services.crm_automation_engine import seed_cardinal_rules
-    seed_cardinal_rules()
-    ensure_integration_tables()
-    ensure_pii_audit_table()  # DPDP: creates pii_access_log, consent_records, retention_policies, grievances
-    ensure_bpm_tables(engine)  # BPM: multi-KB + lifecycle + ML + QA flag tables
+    _run_startup_ddl()
     threading.Thread(
         target=run_integration_poller,
         daemon=True,
