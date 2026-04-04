@@ -24,6 +24,7 @@ steps:
       - '--image=asia-south1-docker.pkg.dev/project-2d37241a-3276-4c0d-b31/auralis/governance:latest'
       - '--region=asia-south1'
       - '--platform=managed'
+      - '--update-secrets=FRONTEND_URL=auralis-frontend-url:latest'
       - '--quiet'
 
 options:
