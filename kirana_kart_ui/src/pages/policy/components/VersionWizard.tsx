@@ -13,7 +13,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   X, Upload, FileText, FileType, CheckCircle2, Loader2,
   AlertTriangle, ArrowRight, ArrowLeft, Sparkles, BarChart2,
-  Rocket, CloudUpload,
+  Rocket, CloudUpload, Pencil, Trash2, Plus, Save,
 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { governanceClient as apiClient } from '@/api/clients'
@@ -361,7 +361,290 @@ function AIAnalysisStep({
   )
 }
 
-// ---- Step 3: Review Rules ----
+// ---- Step 3: Review & Edit Rules (inline) ----
+
+type Rule = {
+  id: number
+  rule_id: string
+  issue_type_l1: string
+  issue_type_l2: string | null
+  action_name: string
+  priority: number
+  conditions: Record<string, unknown>
+  min_order_value: number | null
+  max_order_value: number | null
+  deterministic: boolean
+}
+
+type EditDraft = {
+  issue_type_l1: string
+  issue_type_l2: string
+  action_name: string
+  priority: number
+  min_order_value: string
+  max_order_value: string
+}
+
+const BLANK_DRAFT: EditDraft = {
+  issue_type_l1: '',
+  issue_type_l2: '',
+  action_name: '',
+  priority: 50,
+  min_order_value: '',
+  max_order_value: '',
+}
+
+function RuleCard({
+  rule,
+  kbId,
+  onSaved,
+  onDeleted,
+}: {
+  rule: Rule
+  kbId: string
+  onSaved: () => void
+  onDeleted: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState<EditDraft>({
+    issue_type_l1: rule.issue_type_l1,
+    issue_type_l2: rule.issue_type_l2 ?? '',
+    action_name: rule.action_name,
+    priority: rule.priority,
+    min_order_value: rule.min_order_value != null ? String(rule.min_order_value) : '',
+    max_order_value: rule.max_order_value != null ? String(rule.max_order_value) : '',
+  })
+  const [saveErr, setSaveErr] = useState('')
+
+  const saveMut = useMutation({
+    mutationFn: () =>
+      apiClient.put(`/rules/${kbId}/${rule.id}`, {
+        issue_type_l1: draft.issue_type_l1,
+        issue_type_l2: draft.issue_type_l2 || null,
+        action_name: draft.action_name,
+        priority: draft.priority,
+        min_order_value: draft.min_order_value ? parseFloat(draft.min_order_value) : null,
+        max_order_value: draft.max_order_value ? parseFloat(draft.max_order_value) : null,
+      }),
+    onSuccess: () => { setEditing(false); setSaveErr(''); onSaved() },
+    onError: () => setSaveErr('Could not save. Please check the fields and try again.'),
+  })
+
+  const delMut = useMutation({
+    mutationFn: () => apiClient.delete(`/rules/${kbId}/${rule.id}`),
+    onSuccess: onDeleted,
+  })
+
+  const inp = 'w-full px-2.5 py-1.5 rounded-lg border border-surface-border bg-surface text-sm text-foreground placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-brand-500'
+
+  if (editing) {
+    return (
+      <div className="bg-surface-card border border-brand-500/40 rounded-xl p-4 space-y-3">
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs text-muted mb-0.5 block">Issue type (level 1) *</label>
+            <input className={inp} value={draft.issue_type_l1}
+              onChange={e => setDraft(d => ({ ...d, issue_type_l1: e.target.value }))}
+              placeholder="e.g. Food Safety" />
+          </div>
+          <div>
+            <label className="text-xs text-muted mb-0.5 block">Sub-type (level 2)</label>
+            <input className={inp} value={draft.issue_type_l2}
+              onChange={e => setDraft(d => ({ ...d, issue_type_l2: e.target.value }))}
+              placeholder="e.g. Foreign Object" />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs text-muted mb-0.5 block">Action to take *</label>
+          <input className={inp} value={draft.action_name}
+            onChange={e => setDraft(d => ({ ...d, action_name: e.target.value }))}
+            placeholder="e.g. Issue full refund + ₹100 compensation" />
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <div>
+            <label className="text-xs text-muted mb-0.5 block">Priority (1–999)</label>
+            <input className={inp} type="number" min={1} max={999} value={draft.priority}
+              onChange={e => setDraft(d => ({ ...d, priority: parseInt(e.target.value) || 50 }))} />
+          </div>
+          <div>
+            <label className="text-xs text-muted mb-0.5 block">Min order value (₹)</label>
+            <input className={inp} type="number" value={draft.min_order_value}
+              onChange={e => setDraft(d => ({ ...d, min_order_value: e.target.value }))}
+              placeholder="Any" />
+          </div>
+          <div>
+            <label className="text-xs text-muted mb-0.5 block">Max order value (₹)</label>
+            <input className={inp} type="number" value={draft.max_order_value}
+              onChange={e => setDraft(d => ({ ...d, max_order_value: e.target.value }))}
+              placeholder="Any" />
+          </div>
+        </div>
+        {saveErr && <p className="text-xs text-red-500">{saveErr}</p>}
+        <div className="flex gap-2 justify-end">
+          <button onClick={() => setEditing(false)}
+            className="px-3 py-1.5 text-sm border border-surface-border rounded-lg text-foreground hover:bg-surface transition-colors">
+            Cancel
+          </button>
+          <button
+            onClick={() => saveMut.mutate()}
+            disabled={saveMut.isPending || !draft.issue_type_l1 || !draft.action_name}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-40 transition-colors">
+            <Save className="w-3.5 h-3.5" />
+            {saveMut.isPending ? 'Saving…' : 'Save Rule'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-surface-card border border-surface-border rounded-xl p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-mono text-muted">{rule.rule_id}</span>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600 font-medium">
+              {rule.issue_type_l1}{rule.issue_type_l2 ? ` › ${rule.issue_type_l2}` : ''}
+            </span>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-surface text-muted border border-surface-border">
+              Priority {rule.priority}
+            </span>
+            {rule.deterministic && (
+              <span className="text-xs text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-0.5 rounded-full">
+                Auto
+              </span>
+            )}
+          </div>
+          <p className="text-sm font-medium text-foreground mt-1.5">{rule.action_name}</p>
+          {(rule.min_order_value != null || rule.max_order_value != null) && (
+            <p className="text-xs text-muted mt-0.5">
+              Order value:{' '}
+              {rule.min_order_value != null ? `≥ ₹${rule.min_order_value}` : ''}
+              {rule.min_order_value != null && rule.max_order_value != null ? ' · ' : ''}
+              {rule.max_order_value != null ? `≤ ₹${rule.max_order_value}` : ''}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button onClick={() => setEditing(true)}
+            className="p-1.5 rounded-lg text-muted hover:text-brand-500 hover:bg-surface transition-colors"
+            title="Edit rule">
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => delMut.mutate()}
+            disabled={delMut.isPending}
+            className="p-1.5 rounded-lg text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors disabled:opacity-40"
+            title="Remove rule">
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AddRuleCard({
+  kbId,
+  entityId,
+  onAdded,
+}: {
+  kbId: string
+  entityId: string
+  onAdded: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState<EditDraft>(BLANK_DRAFT)
+  const [err, setErr] = useState('')
+
+  const addMut = useMutation({
+    mutationFn: () =>
+      apiClient.post(`/rules/${kbId}`, {
+        kb_id: kbId,
+        version_label: entityId,
+        issue_type_l1: draft.issue_type_l1,
+        issue_type_l2: draft.issue_type_l2 || null,
+        action_name: draft.action_name,
+        priority: draft.priority,
+        min_order_value: draft.min_order_value ? parseFloat(draft.min_order_value) : null,
+        max_order_value: draft.max_order_value ? parseFloat(draft.max_order_value) : null,
+      }),
+    onSuccess: () => { setOpen(false); setDraft(BLANK_DRAFT); setErr(''); onAdded() },
+    onError: () => setErr('Could not add rule. Please fill in all required fields.'),
+  })
+
+  const inp = 'w-full px-2.5 py-1.5 rounded-lg border border-surface-border bg-surface text-sm text-foreground placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-brand-500'
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="w-full flex items-center justify-center gap-2 py-3 border-2 border-dashed border-surface-border rounded-xl text-sm text-muted hover:border-brand-400 hover:text-brand-500 transition-colors"
+      >
+        <Plus className="w-4 h-4" /> Add a rule manually
+      </button>
+    )
+  }
+
+  return (
+    <div className="bg-surface-card border border-brand-500/40 rounded-xl p-4 space-y-3">
+      <p className="text-sm font-semibold text-foreground">New Rule</p>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-xs text-muted mb-0.5 block">Issue type (level 1) *</label>
+          <input className={inp} value={draft.issue_type_l1}
+            onChange={e => setDraft(d => ({ ...d, issue_type_l1: e.target.value }))}
+            placeholder="e.g. Food Safety" />
+        </div>
+        <div>
+          <label className="text-xs text-muted mb-0.5 block">Sub-type (level 2)</label>
+          <input className={inp} value={draft.issue_type_l2}
+            onChange={e => setDraft(d => ({ ...d, issue_type_l2: e.target.value }))}
+            placeholder="e.g. Foreign Object" />
+        </div>
+      </div>
+      <div>
+        <label className="text-xs text-muted mb-0.5 block">Action to take *</label>
+        <input className={inp} value={draft.action_name}
+          onChange={e => setDraft(d => ({ ...d, action_name: e.target.value }))}
+          placeholder="e.g. Issue full refund + ₹100 compensation" />
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <div>
+          <label className="text-xs text-muted mb-0.5 block">Priority (1–999)</label>
+          <input className={inp} type="number" min={1} max={999} value={draft.priority}
+            onChange={e => setDraft(d => ({ ...d, priority: parseInt(e.target.value) || 50 }))} />
+        </div>
+        <div>
+          <label className="text-xs text-muted mb-0.5 block">Min order value (₹)</label>
+          <input className={inp} type="number" value={draft.min_order_value}
+            onChange={e => setDraft(d => ({ ...d, min_order_value: e.target.value }))}
+            placeholder="Any" />
+        </div>
+        <div>
+          <label className="text-xs text-muted mb-0.5 block">Max order value (₹)</label>
+          <input className={inp} type="number" value={draft.max_order_value}
+            onChange={e => setDraft(d => ({ ...d, max_order_value: e.target.value }))}
+            placeholder="Any" />
+        </div>
+      </div>
+      {err && <p className="text-xs text-red-500">{err}</p>}
+      <div className="flex gap-2 justify-end">
+        <button onClick={() => { setOpen(false); setDraft(BLANK_DRAFT); setErr('') }}
+          className="px-3 py-1.5 text-sm border border-surface-border rounded-lg text-foreground hover:bg-surface transition-colors">
+          Cancel
+        </button>
+        <button
+          onClick={() => addMut.mutate()}
+          disabled={addMut.isPending || !draft.issue_type_l1 || !draft.action_name}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-brand-600 text-white rounded-lg hover:bg-brand-700 disabled:opacity-40 transition-colors">
+          <Plus className="w-3.5 h-3.5" />
+          {addMut.isPending ? 'Adding…' : 'Add Rule'}
+        </button>
+      </div>
+    </div>
+  )
+}
 
 function ReviewRulesStep({
   kbId,
@@ -374,17 +657,21 @@ function ReviewRulesStep({
   onNext: () => void
   onBack: () => void
 }) {
+  const qc = useQueryClient()
+  const qKey = ['rules', kbId, entityId, 'wizard']
   const { data: rules = [], isLoading } = useQuery({
-    queryKey: ['rules', kbId, entityId, 'wizard'],
+    queryKey: qKey,
     queryFn: () => fetchRules(kbId, entityId).then((r) => r.data),
   })
 
+  const refresh = () => qc.invalidateQueries({ queryKey: qKey })
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div>
-        <h2 className="text-lg font-semibold text-foreground">Review Extracted Rules</h2>
+        <h2 className="text-lg font-semibold text-foreground">Review & Edit Rules</h2>
         <p className="text-sm text-muted mt-1">
-          These rules were extracted from your document. Review them before running the impact preview.
+          These rules were extracted from your document. Edit, remove, or add rules before running the impact preview.
         </p>
       </div>
 
@@ -393,57 +680,32 @@ function ReviewRulesStep({
           <Loader2 className="w-6 h-6 animate-spin text-brand-500" />
         </div>
       ) : rules.length === 0 ? (
-        <div className="text-center py-10 text-sm text-muted">
-          No rules extracted yet. Complete AI analysis first.
+        <div className="text-center py-6 text-sm text-muted">
+          No rules extracted yet. Complete AI analysis first, or add rules manually below.
         </div>
       ) : (
-        <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-          {rules.map((rule) => (
-            <div
+        <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+          {(rules as Rule[]).map((rule) => (
+            <RuleCard
               key={rule.id}
-              className="bg-surface-card border border-surface-border rounded-xl p-4"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-mono text-muted">{rule.rule_id}</span>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600 font-medium">
-                      {rule.issue_type_l1}{rule.issue_type_l2 ? ` › ${rule.issue_type_l2}` : ''}
-                    </span>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-surface text-muted border border-surface-border">
-                      Priority {rule.priority}
-                    </span>
-                  </div>
-                  <p className="text-sm font-medium text-foreground mt-1.5">
-                    {rule.action_name}
-                  </p>
-                  {(rule.min_order_value != null || rule.max_order_value != null) && (
-                    <p className="text-xs text-muted mt-0.5">
-                      Order value:{' '}
-                      {rule.min_order_value != null ? `≥ ₹${rule.min_order_value}` : ''}
-                      {rule.min_order_value != null && rule.max_order_value != null ? ' · ' : ''}
-                      {rule.max_order_value != null ? `≤ ₹${rule.max_order_value}` : ''}
-                    </p>
-                  )}
-                </div>
-                {rule.is_deterministic && (
-                  <span className="shrink-0 text-xs text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-0.5 rounded-full">
-                    Auto
-                  </span>
-                )}
-              </div>
-            </div>
+              rule={rule}
+              kbId={kbId}
+              onSaved={refresh}
+              onDeleted={refresh}
+            />
           ))}
         </div>
       )}
 
+      <AddRuleCard kbId={kbId} entityId={entityId} onAdded={refresh} />
+
       {rules.length > 0 && (
-        <p className="text-sm text-muted text-center">
-          {rules.length} rule{rules.length !== 1 ? 's' : ''} ready for review
+        <p className="text-xs text-muted text-center">
+          {rules.length} rule{rules.length !== 1 ? 's' : ''} · click ✏ to edit, 🗑 to remove
         </p>
       )}
 
-      <div className="flex justify-between">
+      <div className="flex justify-between pt-1">
         <button
           onClick={onBack}
           className="flex items-center gap-2 px-4 py-2 text-sm border border-surface-border rounded-lg text-foreground hover:bg-surface transition-colors"

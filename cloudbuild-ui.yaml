@@ -11,8 +11,6 @@ steps:
       - '--platform'
       - 'linux/amd64'
       - '-t'
-      - 'asia-south1-docker.pkg.dev/project-2d37241a-3276-4c0d-b31/auralis/ui:$COMMIT_SHA'
-      - '-t'
       - 'asia-south1-docker.pkg.dev/project-2d37241a-3276-4c0d-b31/auralis/ui:latest'
       - '-f'
       - 'kirana_kart_ui/Dockerfile'
@@ -21,8 +19,7 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - '--all-tags'
-      - 'asia-south1-docker.pkg.dev/project-2d37241a-3276-4c0d-b31/auralis/ui'
+      - 'asia-south1-docker.pkg.dev/project-2d37241a-3276-4c0d-b31/auralis/ui:latest'
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     args:
@@ -30,7 +27,7 @@ steps:
       - 'run'
       - 'deploy'
       - 'ui'
-      - '--image=asia-south1-docker.pkg.dev/project-2d37241a-3276-4c0d-b31/auralis/ui:$COMMIT_SHA'
+      - '--image=asia-south1-docker.pkg.dev/project-2d37241a-3276-4c0d-b31/auralis/ui:latest'
       - '--region=asia-south1'
       - '--platform=managed'
       - '--quiet'
