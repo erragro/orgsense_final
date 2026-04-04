@@ -10,9 +10,22 @@ steps:
       - 'kirana_kart/Dockerfile'
       - 'kirana_kart/'
 
-images:
-  - 'asia-south1-docker.pkg.dev/project-2d37241a-3276-4c0d-b31/auralis/governance:latest'
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'asia-south1-docker.pkg.dev/project-2d37241a-3276-4c0d-b31/auralis/governance:latest'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    args:
+      - 'gcloud'
+      - 'run'
+      - 'deploy'
+      - 'governance'
+      - '--image=asia-south1-docker.pkg.dev/project-2d37241a-3276-4c0d-b31/auralis/governance:latest'
+      - '--region=asia-south1'
+      - '--platform=managed'
+      - '--quiet'
 
 options:
   machineType: 'E2_HIGHCPU_8'
-  logging: CLOUD_LOGGING_ONLY
+  logging: LEGACY
