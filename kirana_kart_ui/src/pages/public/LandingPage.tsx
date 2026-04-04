@@ -152,15 +152,17 @@ const FloatingBadge = forwardRef<HTMLDivElement, {
 // ─── Capability card ──────────────────────────────────────────────────────────
 
 function CapabilityCard({
-  icon: Icon, title, description, accent, index,
+  icon: Icon, title, description, accent, index, href,
 }: {
   icon: React.ComponentType<{ className?: string }>
   title: string
   description: string
   accent: string
   index: number
+  href?: string
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  const navigate = useNavigate()
 
   useEffect(() => {
     const el = ref.current
@@ -176,13 +178,17 @@ function CapabilityCard({
   return (
     <div
       ref={ref}
-      className="reveal group rounded-2xl bg-white dark:bg-zinc-900/80 border border-slate-200 dark:border-zinc-800 p-6 hover:border-blue-300/60 dark:hover:border-zinc-600 hover:shadow-xl hover:shadow-blue-500/5 dark:hover:shadow-black/30 transition-all duration-300 cursor-default"
+      onClick={href ? () => navigate(href) : undefined}
+      className={`reveal group rounded-2xl bg-white dark:bg-zinc-900/80 border border-slate-200 dark:border-zinc-800 p-6 hover:border-blue-300/60 dark:hover:border-zinc-600 hover:shadow-xl hover:shadow-blue-500/5 dark:hover:shadow-black/30 transition-all duration-300 ${href ? 'cursor-pointer' : 'cursor-default'}`}
       style={{ transitionDelay: `${index * 80}ms` }}
     >
       <div className={`inline-flex items-center justify-center w-11 h-11 rounded-xl bg-gradient-to-br ${accent} mb-4 shadow-lg group-hover:scale-110 transition-transform duration-300`}>
         <Icon className="w-5 h-5 text-white" />
       </div>
-      <h3 className="text-slate-900 dark:text-white font-semibold text-base mb-2">{title}</h3>
+      <h3 className="text-slate-900 dark:text-white font-semibold text-base mb-2">
+        {title}
+        {href && <ArrowRight className="inline w-3.5 h-3.5 ml-1.5 opacity-0 group-hover:opacity-60 group-hover:translate-x-0.5 transition-all duration-200" />}
+      </h3>
       <p className="text-slate-500 dark:text-zinc-400 text-sm leading-relaxed">{description}</p>
     </div>
   )
@@ -240,8 +246,8 @@ export default function LandingPage() {
   }, [])
 
   const capabilities = [
-    { icon: Cpu,           title: 'Cardinal Pipeline',  description: 'Every complaint gets the same expert treatment — identified, evaluated against your policies, and resolved. Automatically, every time.', accent: 'from-blue-600 to-blue-500' },
-    { icon: ShieldCheck,   title: 'L2 Validator',       description: 'Spots duplicate complaints and conflicting rules before they waste your team\'s time. A quality gate that never blinks.',             accent: 'from-violet-600 to-violet-500' },
+    { icon: Cpu,           title: 'Cardinal Pipeline',  description: 'Every complaint gets the same expert treatment — identified, evaluated against your policies, and resolved. Automatically, every time.', accent: 'from-blue-600 to-blue-500',    href: '/how-it-works' },
+    { icon: ShieldCheck,   title: 'L2 Validator',       description: 'Spots duplicate complaints and conflicting rules before they waste your team\'s time. A quality gate that never blinks.',             accent: 'from-violet-600 to-violet-500', href: '/l2-validator' },
     { icon: BarChart3,     title: 'BI Agent',            description: 'Ask "How many refunds did we issue yesterday?" and get a chart. No spreadsheets, no data team, no waiting.',                        accent: 'from-emerald-600 to-teal-500' },
     { icon: ClipboardCheck,title: 'QA Agent',            description: 'Every agent conversation is graded automatically. Not 10% of them — all of them, all the time.',                                   accent: 'from-orange-600 to-amber-500' },
     { icon: LifeBuoy,      title: 'CRM & Ticket Ops',   description: 'Track every open case, automate follow-ups, and never miss a deadline. Your ops team\'s command centre.',                            accent: 'from-rose-600 to-pink-500' },
