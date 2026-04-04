@@ -8,16 +8,20 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useAuthStore } from '@/stores/auth.store'
+import { hasPermission } from '@/lib/access'
 import { qaApi } from '@/api/governance/qa.api'
 import { getAccessToken } from '@/api/interceptors'
 import { useToastStore } from '@/stores/toast.store'
 import { Spinner } from '@/components/ui/Spinner'
+import { SixSigmaFlagsPanel } from './components/SixSigmaFlagsPanel'
+import { MLHealthPanel } from './components/MLHealthPanel'
 import type {
   QASession,
   QAEvaluationSummary,
   QAEvaluation,
   QATicketResult,
   QAParameterResult,
+  MLCheckResult,
   PythonCheckResult,
   PythonSummary,
   KBEvidence,
@@ -265,72 +269,6 @@ function PythonChecksSection({
   )
 }
 
-// ─── Parameter Card ───────────────────────────────────────────────────────────
-
-function ParameterCard({ param }: { param: QAParameterResult }) {
-  const [open, setOpen] = useState(false)
-  const badge = passLabel(param.pass, param.score)
-  return (
-    <div className="rounded-lg border border-surface-border bg-surface-card overflow-hidden">
-      <button
-        className="w-full flex items-start gap-3 p-3 text-left hover:bg-surface/50 transition-colors"
-        onClick={() => setOpen(v => !v)}
-      >
-        {/* Score bar column */}
-        <div className="flex flex-col items-center gap-1 shrink-0 pt-0.5">
-          <span className={cn('text-sm font-bold tabular-nums', scoreTextColor(param.score))}>
-            {formatPct(param.score)}
-          </span>
-          <div className="w-1.5 h-12 rounded-full bg-surface-border overflow-hidden">
-            <div
-              className={cn('w-full rounded-full transition-all duration-700', scoreBg(param.score))}
-              style={{ height: `${param.score * 100}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <span className="text-sm font-medium text-foreground truncate">{param.name}</span>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span className={cn(
-                'text-[10px] font-semibold px-1.5 py-0.5 rounded border',
-                badge.cls
-              )}>
-                {badge.label}
-              </span>
-              {open
-                ? <ChevronUp className="w-3.5 h-3.5 text-muted" />
-                : <ChevronDown className="w-3.5 h-3.5 text-muted" />
-              }
-            </div>
-          </div>
-          <p className="text-xs text-muted mt-1 line-clamp-2">{param.finding}</p>
-        </div>
-      </button>
-
-      {open && (
-        <div className="px-4 pb-3 pt-0 border-t border-surface-border bg-surface/30 space-y-2">
-          <div>
-            <span className="text-[10px] font-semibold text-muted uppercase tracking-wide">Finding</span>
-            <p className="text-xs text-foreground mt-0.5 leading-relaxed">{param.finding}</p>
-          </div>
-          <div>
-            <span className="text-[10px] font-semibold text-muted uppercase tracking-wide">Recommendation</span>
-            <p className={cn(
-              'text-xs mt-0.5 leading-relaxed',
-              param.recommendation === 'No action required' ? 'text-emerald-400' : 'text-amber-300'
-            )}>
-              {param.recommendation}
-            </p>
-          </div>
-          <div className="text-[10px] text-subtle">Weight: {(param.weight * 100).toFixed(0)}%</div>
-        </div>
-      )}
-    </div>
-  )
-}
 
 // ─── KB Evidence Panel ────────────────────────────────────────────────────────
 
@@ -522,6 +460,7 @@ interface LiveEval {
   status: string
   pythonChecks: PythonCheckResult[]
   pythonSummary: PythonSummary | null
+  mlChecks: MLCheckResult[]
   parameters: QAParameterResult[]
   summary: QASummary | null
   kbEvidence: KBEvidence | null
@@ -535,6 +474,7 @@ const emptyLiveEval = (): LiveEval => ({
   status: '',
   pythonChecks: [],
   pythonSummary: null,
+  mlChecks: [],
   parameters: [],
   summary: null,
   kbEvidence: null,
@@ -548,6 +488,7 @@ const emptyLiveEval = (): LiveEval => ({
 
 export default function QAAgentPage() {
   const { user } = useAuthStore()
+  const canAdmin = hasPermission(user, 'policy', 'admin') || !!user?.is_super_admin
   const qc = useQueryClient()
   const toast = useToastStore()
   const abortRef = useRef<AbortController | null>(null)
@@ -623,7 +564,10 @@ export default function QAAgentPage() {
   // Sync loaded eval into live state
   useEffect(() => {
     if (!loadedEval || live.streaming) return
-    const findings = (loadedEval.findings as QAParameterResult[]) ?? []
+    const allFindings = (loadedEval.findings as (QAParameterResult | MLCheckResult)[]) ?? []
+    // Split persisted findings into LLM parameters vs ML checks (by source field)
+    const findings = allFindings.filter(f => !('source' in f) || (f as MLCheckResult).source !== 'ml') as QAParameterResult[]
+    const mlChecks = allFindings.filter(f => ('source' in f) && (f as MLCheckResult).source === 'ml') as MLCheckResult[]
     setLive({
       status: '',
       pythonChecks: (loadedEval.python_findings as PythonCheckResult[]) ?? [],
@@ -633,6 +577,7 @@ export default function QAAgentPage() {
         python_pass_count: ((loadedEval.python_findings as PythonCheckResult[]) ?? []).filter(c => c.pass).length,
         python_fail_count: ((loadedEval.python_findings as PythonCheckResult[]) ?? []).filter(c => !c.pass).length,
       } : null,
+      mlChecks,
       parameters: findings,
       summary: loadedEval.overall_score != null ? {
         overall_score: loadedEval.overall_score,
@@ -738,6 +683,18 @@ export default function QAAgentPage() {
                   python_pass_count: evt.python_pass_count!,
                   python_fail_count: evt.python_fail_count!,
                 },
+              }
+            case 'ml_check':
+              return {
+                ...prev,
+                mlChecks: [...prev.mlChecks, {
+                  name: evt.name!,
+                  score: evt.score!,
+                  weight: evt.weight!,
+                  pass: evt.pass!,
+                  finding: evt.finding!,
+                  source: 'ml' as const,
+                }],
               }
             case 'parameter':
               return {
@@ -1082,30 +1039,22 @@ export default function QAAgentPage() {
                 </div>
               )}
 
-              {/* ── 3. AI Parameter cards grid ── */}
-              {live.parameters.length > 0 && (
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <BookOpen className="w-4 h-4 text-brand-400" />
-                    <span className="text-sm font-semibold text-foreground">AI Quality Evaluation</span>
-                    <span className="text-xs text-muted">
-                      ({live.parameters.length}/10
-                      {live.streaming ? ' — evaluating…' : ''})
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-                    {live.parameters.map((p, i) => (
-                      <ParameterCard key={i} param={p} />
-                    ))}
-                    {/* Skeleton placeholders while streaming */}
-                    {live.streaming && Array.from({ length: 10 - live.parameters.length }).map((_, i) => (
-                      <div key={`sk-${i}`} className="rounded-lg border border-surface-border bg-surface-card p-3 animate-pulse">
-                        <div className="h-3 w-36 bg-surface-border rounded mb-2" />
-                        <div className="h-2 w-full bg-surface-border rounded" />
-                      </div>
-                    ))}
-                  </div>
+              {/* ── 3. Six Sigma + ML quality checks ── */}
+              {(live.parameters.length > 0 || live.mlChecks.length > 0 ||
+                (live.streaming && live.status.includes('Six Sigma'))) && (
+                <div className="rounded-xl border border-surface-border bg-surface-card p-4">
+                  <SixSigmaFlagsPanel
+                    parameters={live.parameters}
+                    mlChecks={live.mlChecks}
+                    evaluationId={live.evaluationId}
+                    canAdmin={canAdmin}
+                    streaming={live.streaming && live.parameters.length < 6}
+                  />
                 </div>
+              )}
+
+              {canAdmin && (
+                <MLHealthPanel canAdmin={canAdmin} />
               )}
 
               <div ref={resultsEndRef} />

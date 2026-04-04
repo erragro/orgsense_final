@@ -42,6 +42,9 @@ pgvector>=0.3.0,<1.0.0
 # Document Processing
 # ----------------------------
 python-docx>=1.1.0,<2.0.0
+pdfminer.six>=20221105            # local PDF text extraction (no API needed)
+sentence-transformers>=2.6,<4.0  # all-MiniLM-L6-v2 semantic matching (80MB, CPU-fast)
+scikit-learn>=1.4,<2.0            # RandomForest gate predictor + TF-IDF classifiers
 markdown>=3.6,<4.0
 
 # ----------------------------

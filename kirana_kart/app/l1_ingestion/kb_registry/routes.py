@@ -13,7 +13,7 @@ This layer:
 - Contains NO business logic
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, field_validator
 from sqlalchemy import create_engine, text
@@ -72,6 +72,7 @@ class UploadRequest(BaseModel):
     raw_content: str
     uploaded_by: str
     version_label: str
+    kb_id: str = "default"
 
     @field_validator("raw_content")
     @classmethod
@@ -89,6 +90,7 @@ class UpdateRequest(BaseModel):
 class PublishRequest(BaseModel):
     version_label: str
     published_by: str
+    kb_id: str = "default"
 
 
 # ============================================================
@@ -250,18 +252,22 @@ def get_active(document_id: str, _u: UserContext = Depends(_kb_view)):
 # ------------------------------------------------------------
 
 @router.get("/active-version")
-def get_active_policy_version(_u: UserContext = Depends(_kb_view)):
+def get_active_policy_version(
+    kb_id: str = Query("default"),
+    _u: UserContext = Depends(_kb_view),
+):
 
     try:
 
         with engine.connect() as conn:
 
             row = conn.execute(text("""
-                SELECT active_version, activated_at
+                SELECT active_version, activated_at, kb_id
                 FROM kirana_kart.kb_runtime_config
+                WHERE kb_id = :kb_id
                 ORDER BY id DESC
                 LIMIT 1
-            """)).mappings().first()
+            """), {"kb_id": kb_id}).mappings().first()
 
         if not row:
             return {"active_version": None, "activated_at": None}
@@ -311,17 +317,21 @@ def get_policy_version(version: str, _u: UserContext = Depends(_kb_view)):
 # ------------------------------------------------------------
 
 @router.get("/versions")
-def list_policy_versions(_u: UserContext = Depends(_kb_view)):
+def list_policy_versions(
+    kb_id: str = Query("default"),
+    _u: UserContext = Depends(_kb_view),
+):
 
     try:
 
         with engine.connect() as conn:
 
             rows = conn.execute(text("""
-                SELECT id, version_label, status, created_by, created_at, snapshot_data
+                SELECT id, version_label, status, created_by, created_at, snapshot_data, kb_id
                 FROM kirana_kart.knowledge_base_versions
+                WHERE kb_id = :kb_id
                 ORDER BY created_at DESC
-            """)).mappings().all()
+            """), {"kb_id": kb_id}).mappings().all()
 
         return jsonable_encoder([dict(r) for r in rows])
 
@@ -335,7 +345,10 @@ def list_policy_versions(_u: UserContext = Depends(_kb_view)):
 # ------------------------------------------------------------
 
 @router.get("/uploads")
-def list_raw_uploads(_u: UserContext = Depends(_kb_view)):
+def list_raw_uploads(
+    kb_id: str = Query("default"),
+    _u: UserContext = Depends(_kb_view),
+):
 
     try:
 
@@ -357,10 +370,12 @@ def list_raw_uploads(_u: UserContext = Depends(_kb_view)):
                     version_label,
                     is_active,
                     registry_status,
-                    updated_at
+                    updated_at,
+                    kb_id
                 FROM kirana_kart.knowledge_base_raw_uploads
+                WHERE kb_id = :kb_id
                 ORDER BY uploaded_at DESC
-            """)).mappings().all()
+            """), {"kb_id": kb_id}).mappings().all()
 
         return jsonable_encoder([dict(r) for r in rows])
 
@@ -374,7 +389,11 @@ def list_raw_uploads(_u: UserContext = Depends(_kb_view)):
 # ------------------------------------------------------------
 
 @router.get("/rule-registry/{version_label}")
-def get_rule_registry(version_label: str, _u: UserContext = Depends(_kb_view)):
+def get_rule_registry(
+    version_label: str,
+    kb_id: str = Query("default"),
+    _u: UserContext = Depends(_kb_view),
+):
     """
     Returns all compiled rules for a policy version joined with action code info.
     Used by the Decision Matrix tab.
@@ -413,8 +432,9 @@ def get_rule_registry(version_label: str, _u: UserContext = Depends(_kb_view)):
                 FROM kirana_kart.rule_registry r
                 JOIN kirana_kart.master_action_codes mac ON mac.id = r.action_id
                 WHERE r.policy_version = :version
+                  AND r.kb_id = :kb_id
                 ORDER BY r.module_name, r.priority
-            """), {"version": version_label}).mappings().all()
+            """), {"version": version_label, "kb_id": kb_id}).mappings().all()
 
         return jsonable_encoder([dict(r) for r in rows])
 

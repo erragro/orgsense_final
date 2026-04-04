@@ -32,6 +32,7 @@ from app.admin.services.qa_agent_service import (
     fetch_ticket_context,
     retrieve_kb_evidence,
     run_python_evaluations,
+    run_ml_evaluations,
     run_qa_evaluation,
     persist_evaluation,
 )
@@ -109,6 +110,15 @@ def ensure_qa_tables() -> None:
     migrations = [
         "ALTER TABLE kirana_kart.qa_evaluations ADD COLUMN IF NOT EXISTS python_qa_score NUMERIC(5,4)",
         "ALTER TABLE kirana_kart.qa_evaluations ADD COLUMN IF NOT EXISTS python_findings JSONB",
+        """CREATE TABLE IF NOT EXISTS kirana_kart.qa_flag_overrides (
+            id              SERIAL PRIMARY KEY,
+            qa_evaluation_id INTEGER NOT NULL REFERENCES kirana_kart.qa_evaluations(id) ON DELETE CASCADE,
+            parameter_name  TEXT NOT NULL,
+            original_score  NUMERIC(5,4),
+            override_by     INTEGER REFERENCES kirana_kart.users(id),
+            override_reason TEXT,
+            overridden_at   TIMESTAMP DEFAULT NOW()
+        )""",
     ]
     try:
         with engine.connect() as conn:
@@ -413,6 +423,7 @@ async def evaluate_stream(
         context: dict = {}
         kb_evidence: dict = {"rules": [], "issues": [], "actions": []}
         python_results: dict | None = None
+        ml_check_results: list = []
 
         try:
             # ── Step 1: fetch context ──────────────────────────────
@@ -446,11 +457,20 @@ async def evaluate_stream(
                 # Non-fatal: continue with LLM evaluation
                 python_results = None
 
+            # ── Step 3.5: ML checks (Override Justification + Fraud Segment) ──
+            yield _sse({"type": "status", "text": "Running ML quality checks…"})
+            try:
+                ml_check_results = run_ml_evaluations(context)
+                for check in ml_check_results:
+                    yield _sse({"type": "ml_check", **check})
+            except Exception as ml_exc:
+                logger.warning("ML evaluation error (non-fatal): %s", ml_exc)
+
             # ── Step 4: run LLM semantic evaluation ───────────────
             rule_count = len(kb_evidence.get("rules", []))
             yield _sse({
                 "type": "status",
-                "text": f"Running AI semantic evaluation across 10 parameters ({rule_count} KB rules loaded)…",
+                "text": f"Running Six Sigma AI evaluation across 6 parameters ({rule_count} KB rules loaded)…",
             })
 
             try:
@@ -486,6 +506,7 @@ async def evaluate_stream(
                         kb_evidence=kb_evidence,
                         result=evaluation_result,
                         python_results=python_results,
+                        ml_results=ml_check_results or None,
                     )
                     yield _sse({"type": "done", "evaluation_id": eval_id})
                 except Exception as db_exc:
@@ -502,3 +523,83 @@ async def evaluate_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ============================================================
+# QA FLAG OVERRIDES — dismiss/override LLM Six Sigma flags
+# ============================================================
+
+class DismissFlagRequest(BaseModel):
+    parameter_name: str
+    original_score: float
+    dismiss_reason: str      # "Expected behavior" | "Business exception" | "False positive"
+    dismiss_note: str = ""
+
+@router.post("/evaluations/{evaluation_id}/dismiss-flag")
+def dismiss_qa_flag(
+    evaluation_id: int,
+    body: DismissFlagRequest,
+    u: UserContext = Depends(require_permission("policy", "admin")),
+):
+    """
+    Governance admin dismisses/overrides a Six Sigma QA flag.
+    Stored in qa_flag_overrides for audit trail.
+    """
+    from sqlalchemy import text as _text
+    try:
+        with engine.begin() as conn:
+            # Verify evaluation exists
+            ev = conn.execute(_text("""
+                SELECT id FROM kirana_kart.qa_evaluations WHERE id = :id
+            """), {"id": evaluation_id}).fetchone()
+            if not ev:
+                raise HTTPException(status_code=404, detail="Evaluation not found")
+
+            # Delete existing override for same param if any, then insert fresh
+            conn.execute(_text("""
+                DELETE FROM kirana_kart.qa_flag_overrides
+                WHERE qa_evaluation_id = :eval_id AND parameter_name = :param
+            """), {"eval_id": evaluation_id, "param": body.parameter_name})
+
+            conn.execute(_text("""
+                INSERT INTO kirana_kart.qa_flag_overrides
+                    (qa_evaluation_id, parameter_name, original_score,
+                     override_by, override_reason, overridden_at)
+                VALUES
+                    (:eval_id, :param, :score, :user_id, :reason, NOW())
+            """), {
+                "eval_id": evaluation_id,
+                "param": body.parameter_name,
+                "score": body.original_score,
+                "user_id": u.id,
+                "reason": f"{body.dismiss_reason}: {body.dismiss_note}".strip(": "),
+            })
+
+        return {"status": "dismissed", "parameter_name": body.parameter_name}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("dismiss_qa_flag failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/evaluations/{evaluation_id}/flags")
+def get_qa_flags(
+    evaluation_id: int,
+    _u: UserContext = Depends(require_permission("policy", "view")),
+):
+    """Return all dismissed flags for an evaluation (for UI to show dismissed state)."""
+    from sqlalchemy import text as _text
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(_text("""
+                SELECT parameter_name, original_score, override_reason, overridden_at
+                FROM kirana_kart.qa_flag_overrides
+                WHERE qa_evaluation_id = :id
+                ORDER BY overridden_at DESC
+            """), {"id": evaluation_id}).mappings().all()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.exception("get_qa_flags failed")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -5,6 +5,7 @@ import { useUIStore } from '@/stores/ui.store'
 import { useAuthStore } from '@/stores/auth.store'
 import { hasPermission } from '@/lib/access'
 import { NotificationBell } from '@/pages/crm/components/NotificationBell'
+import { KBContextSelector } from './KBContextSelector'
 
 const BREADCRUMB_MAP: Record<string, string> = {
   '/dashboard': 'Dashboard',
@@ -54,6 +55,7 @@ export function TopBar({ systemHealthStatus }: TopBarProps) {
       </nav>
 
       <div className="flex items-center gap-3">
+        <KBContextSelector />
         {hasCRM && <NotificationBell />}
         {systemHealthStatus && (
           <div className="flex items-center gap-1.5">

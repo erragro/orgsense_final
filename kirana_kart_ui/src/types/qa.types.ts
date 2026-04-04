@@ -1,5 +1,21 @@
 // ─── QA Agent Types ───────────────────────────────────────────────────────────
 
+export interface MLCheckResult {
+  name: string
+  score: number
+  weight: number
+  pass: boolean
+  finding: string
+  source: 'ml'
+}
+
+export interface DismissedFlag {
+  parameter_name: string
+  original_score: number
+  override_reason: string
+  overridden_at: string
+}
+
 export interface PythonCheckResult {
   name: string
   category: 'Accuracy' | 'Financial' | 'Compliance' | 'Operational' | 'Quality' | 'Risk' | 'Cost'
@@ -136,6 +152,7 @@ export type QASSEEventType =
   | 'kb_evidence'
   | 'python_check'
   | 'python_summary'
+  | 'ml_check'
   | 'parameter'
   | 'summary'
   | 'done'

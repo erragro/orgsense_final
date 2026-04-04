@@ -35,6 +35,7 @@ from app.admin.routes.cardinal import ensure_schedule_table, ensure_master_actio
 from app.admin.services.integration_service import ensure_integration_tables, run_integration_poller
 from app.admin.services.crm_service import ensure_crm_tables
 from app.middleware.pii_audit_middleware import ensure_pii_audit_table
+from app.admin.services.bpm_tables import ensure_bpm_tables
 
 import logging
 
@@ -124,6 +125,7 @@ async def lifespan(app: FastAPI):
     seed_cardinal_rules()
     ensure_integration_tables()
     ensure_pii_audit_table()  # DPDP: creates pii_access_log, consent_records, retention_policies, grievances
+    ensure_bpm_tables(engine)  # BPM: multi-KB + lifecycle + ML + QA flag tables
     threading.Thread(
         target=run_integration_poller,
         daemon=True,
@@ -260,6 +262,8 @@ from app.admin.routes.cardinal import router as cardinal_router
 from app.admin.routes.crm_routes import router as crm_router
 from app.admin.routes.consent_routes import router as consent_router
 from app.admin.routes.data_rights_routes import router as data_rights_router
+from app.admin.routes.bpm_routes import router as bpm_router
+from app.admin.routes.rule_routes import router as rule_router
 
 app.include_router(auth_router)
 app.include_router(session_router)
@@ -281,6 +285,8 @@ app.include_router(cardinal_router)
 app.include_router(crm_router)
 app.include_router(consent_router)
 app.include_router(data_rights_router)
+app.include_router(bpm_router)
+app.include_router(rule_router)
 
 
 # ============================================================
@@ -343,7 +349,7 @@ def system_status():
         "status": "unhealthy",
         "database": "error",
         "redis": "error",
-        "weaviate": "error",
+        "pgvector": "error",
         "active_version": None,
         "shadow_version": None,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -360,20 +366,13 @@ def system_status():
     # Redis
     status["redis"] = "ok" if redis_ping() else "error"
 
-    # Weaviate
+    # pgvector (replaced Weaviate)
     try:
-        import weaviate
-        weaviate_kwargs: dict = {
-            "url": f"http://{settings.weaviate_host}:{settings.weaviate_http_port}",
-        }
-        if settings.weaviate_api_key:
-            weaviate_kwargs["auth_client_secret"] = weaviate.AuthApiKey(
-                api_key=settings.weaviate_api_key
-            )
-        client = weaviate.Client(**weaviate_kwargs)
-        status["weaviate"] = "ok" if client.is_ready() else "error"
+        with engine.connect() as conn:
+            conn.execute(text("SELECT COUNT(*) FROM kirana_kart.kb_rule_vectors LIMIT 1"))
+        status["pgvector"] = "ok"
     except Exception:
-        status["weaviate"] = "error"
+        status["pgvector"] = "error"
 
     # Active + shadow policy version
     try:
@@ -392,7 +391,7 @@ def system_status():
     except Exception:
         pass
 
-    ok_count = sum(1 for k in ("database", "redis", "weaviate") if status[k] == "ok")
+    ok_count = sum(1 for k in ("database", "redis", "pgvector") if status[k] == "ok")
     if ok_count == 3:
         status["status"] = "healthy"
     elif ok_count > 0:

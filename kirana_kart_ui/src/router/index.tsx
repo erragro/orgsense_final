@@ -67,6 +67,9 @@ const QAAgentPage = lazy(() => import('@/pages/agents/QAAgentPage'))
 const SandboxPage = lazy(() => import('@/pages/sandbox/SandboxPage'))
 const UserManagementPage = lazy(() => import('@/pages/users/UserManagementPage'))
 const CardinalPage = lazy(() => import('@/pages/cardinal/CardinalPage'))
+const PolicyBPMPage = lazy(() => import('@/pages/policy/PolicyBPMPage'))
+const RuleEditorPage = lazy(() => import('@/pages/policy/RuleEditorPage'))
+const KBAdminPage = lazy(() => import('@/pages/admin/KBAdminPage'))
 
 // CRM pages
 const CRMQueuePage          = lazy(() => import('@/pages/crm/CRMQueuePage'))
@@ -121,6 +124,8 @@ export const router = createBrowserRouter([
       { path: '/knowledge-base', element: protect(KBPage, 'knowledgeBase') },
       { path: '/knowledge-base/*', element: protect(KBPage, 'knowledgeBase') },
       { path: '/policy', element: protect(PolicyPage, 'policy') },
+      { path: '/policy/bpm', element: protect(PolicyBPMPage, 'policy') },
+      { path: '/policy/rules', element: protect(RuleEditorPage, 'policy') },
       { path: '/policy/*', element: protect(PolicyPage, 'policy') },
       { path: '/customers', element: protect(CustomerListPage, 'customers') },
       { path: '/customers/:customerId', element: protect(CustomerDetailPage, 'customers') },
@@ -134,6 +139,7 @@ export const router = createBrowserRouter([
       { path: '/cardinal', element: protect(CardinalPage, 'cardinal') },
       { path: '/cardinal/*', element: protect(CardinalPage, 'cardinal') },
       { path: '/users', element: protect(UserManagementPage, 'system', 'admin') },
+      { path: '/admin/kbs', element: protect(KBAdminPage, 'system', 'admin') },
       { path: '/crm',                   element: protect(CRMQueuePage,          'crm') },
       { path: '/crm/ticket/:queueId',   element: protect(CRMWorkViewPage,       'crm') },
       { path: '/crm/dashboard',         element: protect(CRMAgentDashboardPage, 'crm') },

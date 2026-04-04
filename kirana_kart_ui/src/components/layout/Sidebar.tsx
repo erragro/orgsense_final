@@ -6,7 +6,7 @@ import {
   LayoutDashboard, Ticket, TreeDeciduous,
   BookOpen, Shield, Users, BarChart3, Settings,
   ChevronLeft, ChevronRight, LogOut, BrainCircuit, FlaskConical, UserCog, Cpu, ShieldCheck,
-  Headphones, ListChecks, BarChart2, FileBarChart2, Zap, Clock,
+  Headphones, ListChecks, BarChart2, FileBarChart2, Zap, Clock, GitBranch, Database,
   type LucideIcon,
 } from 'lucide-react'
 import { hasPermission, type AppModule, type Permission } from '@/lib/access'
@@ -41,6 +41,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: 'Taxonomy', icon: TreeDeciduous, path: '/taxonomy', module: 'taxonomy' },
       { label: 'Knowledge Base', icon: BookOpen, path: '/knowledge-base', module: 'knowledgeBase' },
       { label: 'Policy', icon: Shield, path: '/policy', module: 'policy' },
+      { label: 'Policy BPM', icon: GitBranch, path: '/policy/bpm', module: 'policy' },
     ],
   },
   {
@@ -75,6 +76,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: 'System Admin', icon: Settings, path: '/system', module: 'system' },
       { label: 'Users', icon: UserCog, path: '/users', module: 'system', permission: 'admin' },
+      { label: 'KB Admin', icon: Database, path: '/admin/kbs', module: 'system', permission: 'admin' },
     ],
   },
 ]
