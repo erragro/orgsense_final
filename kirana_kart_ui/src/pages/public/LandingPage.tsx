@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   Cpu, ShieldCheck, BarChart3, ClipboardCheck, LifeBuoy, BookOpen,
   ArrowRight, Zap, Sun, Moon, CheckCircle2, XCircle,
+  Inbox, BrainCircuit, Send,
 } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth.store'
 import { useUIStore } from '@/stores/ui.store'
@@ -96,6 +97,10 @@ function Navbar() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <button onClick={() => navigate('/how-it-works')}
+            className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white text-sm transition-colors px-3 py-2">
+            How it Works
+          </button>
           <button onClick={() => navigate('/team')}
             className="text-slate-500 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white text-sm transition-colors px-3 py-2">
             Meet the Team
@@ -235,12 +240,12 @@ export default function LandingPage() {
   }, [])
 
   const capabilities = [
-    { icon: Cpu,           title: 'Cardinal Pipeline',  description: '5-phase ingestion → decision engine. Validates, deduplicates, enriches, and routes every ticket with zero manual input.', accent: 'from-blue-600 to-blue-500' },
-    { icon: ShieldCheck,   title: 'L2 Validator',       description: 'Smart deduplication and rule-based routing. Catches conflicts before they reach agents.',                                   accent: 'from-violet-600 to-violet-500' },
-    { icon: BarChart3,     title: 'BI Agent',            description: 'Ask your operations data in plain English. Instant SQL, charts, and insights — no data team required.',                    accent: 'from-emerald-600 to-teal-500' },
-    { icon: ClipboardCheck,title: 'QA Agent',            description: '10-parameter automated quality scoring across every agent interaction. Audit at scale.',                                    accent: 'from-orange-600 to-amber-500' },
-    { icon: LifeBuoy,      title: 'CRM & Ticket Ops',   description: 'Full ticket lifecycle — SLA tracking, automation rules, CSAT, escalation paths, and merge flows.',                         accent: 'from-rose-600 to-pink-500' },
-    { icon: BookOpen,      title: 'Knowledge Base',      description: 'Versioned SOP management with RAG-powered search. Policy-as-code, with simulation before rollout.',                        accent: 'from-cyan-600 to-sky-500' },
+    { icon: Cpu,           title: 'Cardinal Pipeline',  description: 'Every complaint gets the same expert treatment — identified, evaluated against your policies, and resolved. Automatically, every time.', accent: 'from-blue-600 to-blue-500' },
+    { icon: ShieldCheck,   title: 'L2 Validator',       description: 'Spots duplicate complaints and conflicting rules before they waste your team\'s time. A quality gate that never blinks.',             accent: 'from-violet-600 to-violet-500' },
+    { icon: BarChart3,     title: 'BI Agent',            description: 'Ask "How many refunds did we issue yesterday?" and get a chart. No spreadsheets, no data team, no waiting.',                        accent: 'from-emerald-600 to-teal-500' },
+    { icon: ClipboardCheck,title: 'QA Agent',            description: 'Every agent conversation is graded automatically. Not 10% of them — all of them, all the time.',                                   accent: 'from-orange-600 to-amber-500' },
+    { icon: LifeBuoy,      title: 'CRM & Ticket Ops',   description: 'Track every open case, automate follow-ups, and never miss a deadline. Your ops team\'s command centre.',                            accent: 'from-rose-600 to-pink-500' },
+    { icon: BookOpen,      title: 'Knowledge Base',      description: 'Keep your SOPs alive and searchable. Test a policy change in simulation before it goes live — no surprises.',                       accent: 'from-cyan-600 to-sky-500' },
   ]
 
   const dotGrid = theme === 'dark'
@@ -283,8 +288,8 @@ export default function LandingPage() {
             </h1>
 
             <p className="hero-text-3 text-slate-500 dark:text-zinc-400 text-lg md:text-xl max-w-2xl mx-auto mb-10 leading-relaxed">
-              From raw complaint to resolved ticket — Cardinal automates the decision layer
-              your ops team relies on.
+              Every customer complaint. Every channel. One platform that handles it all —
+              consistently, at scale, without the manual overhead.
             </p>
 
             {/* CTAs */}
@@ -311,6 +316,93 @@ export default function LandingPage() {
           <FloatingBadge ref={badge2Ref} icon={BarChart3}     value="Plain English" label="BI Queries"            accent="from-emerald-600 to-teal-500"  className="right-0 top-[22%]" />
           <FloatingBadge ref={badge3Ref} icon={ClipboardCheck} value="10-Param"     label="QA Scoring"           accent="from-orange-600 to-amber-500"  className="left-4 bottom-[18%]" />
           <FloatingBadge ref={badge4Ref} icon={ShieldCheck}   value="100%"          label="Interactions Audited" accent="from-violet-600 to-violet-500"  className="right-4 bottom-[12%]" />
+        </div>
+      </section>
+
+      {/* ── 3 Steps ─────────────────────────────────────────────────────────── */}
+      <section className="py-24 px-6 border-t border-slate-100 dark:border-zinc-900">
+        <div className="mx-auto max-w-6xl">
+          <RevealSection className="text-center mb-16">
+            <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 dark:border-blue-900/60 bg-blue-50 dark:bg-blue-950/30 px-4 py-1.5 text-xs text-blue-600 dark:text-blue-400 font-medium mb-4">
+              How It Works
+            </div>
+            <h2 className="text-3xl md:text-5xl font-bold text-slate-900 dark:text-white mb-4">
+              From complaint to resolution — fully automated.
+            </h2>
+            <p className="text-slate-500 dark:text-zinc-400 text-base max-w-lg mx-auto">
+              One platform. Every channel. Every decision handled.
+            </p>
+          </RevealSection>
+
+          <div className="relative grid md:grid-cols-3 gap-6 md:gap-0">
+            {/* Dashed connector line on desktop */}
+            <div className="hidden md:block absolute top-10 left-[calc(33%+1rem)] right-[calc(33%+1rem)] border-t-2 border-dashed border-slate-200 dark:border-zinc-800 z-0" />
+
+            {[
+              {
+                icon: Inbox,
+                step: '①',
+                title: 'A complaint arrives',
+                desc: 'A customer reaches out — email, chat, form, wherever. Cardinal picks it up immediately, regardless of channel.',
+                accent: 'from-blue-600 to-blue-500',
+                delay: 0,
+              },
+              {
+                icon: BrainCircuit,
+                step: '②',
+                title: 'Cardinal decides what to do',
+                desc: 'It reads the complaint, matches the issue, checks your policies, and picks the right action — in seconds.',
+                accent: 'from-violet-600 to-violet-500',
+                delay: 120,
+              },
+              {
+                icon: Send,
+                step: '③',
+                title: 'Resolution goes out',
+                desc: 'The decision is executed. Your team sees the full audit trail. The customer gets a fast, consistent answer.',
+                accent: 'from-emerald-600 to-teal-500',
+                delay: 240,
+              },
+            ].map((item) => (
+              <RevealSection key={item.title} delay={item.delay} className="relative z-10 md:px-8 first:pl-0 last:pr-0">
+                <div className="flex flex-col items-center text-center">
+                  <div className={`w-20 h-20 rounded-2xl bg-gradient-to-br ${item.accent} flex items-center justify-center mb-5 shadow-xl`}>
+                    <item.icon className="w-9 h-9 text-white" />
+                  </div>
+                  <div className="text-3xl font-bold text-slate-200 dark:text-zinc-700 mb-2">{item.step}</div>
+                  <h3 className="text-slate-900 dark:text-white font-semibold text-lg mb-3">{item.title}</h3>
+                  <p className="text-slate-500 dark:text-zinc-400 text-sm leading-relaxed max-w-xs">{item.desc}</p>
+                </div>
+              </RevealSection>
+            ))}
+          </div>
+
+          <RevealSection className="text-center mt-12" delay={300}>
+            <button onClick={() => navigate('/how-it-works')}
+              className="inline-flex items-center gap-2 text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 text-sm font-medium transition-colors group">
+              See how Cardinal works in detail
+              <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            </button>
+          </RevealSection>
+        </div>
+      </section>
+
+      {/* ── Feature strip ────────────────────────────────────────────────────── */}
+      <section className="py-0">
+        <div className="bg-slate-950 dark:bg-zinc-900/60 border-y border-slate-800 dark:border-zinc-800">
+          <div className="mx-auto max-w-5xl grid grid-cols-2 md:grid-cols-4 divide-x divide-slate-800 dark:divide-zinc-800">
+            {[
+              { value: 'Any source', label: 'Email · Chat · Forms · API · Voice' },
+              { value: 'Policy-exact', label: 'Every decision follows your defined rules' },
+              { value: 'Fully audited', label: 'Every interaction logged — nothing skipped' },
+              { value: 'Always on', label: 'Cardinal runs 24/7, no manual intervention' },
+            ].map((item) => (
+              <div key={item.value} className="px-8 py-8 text-center">
+                <div className="text-lg md:text-xl font-bold text-white mb-1">{item.value}</div>
+                <div className="text-slate-400 text-xs leading-snug">{item.label}</div>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 

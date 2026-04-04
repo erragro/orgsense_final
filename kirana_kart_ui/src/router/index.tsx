@@ -30,6 +30,8 @@ const protect = (Component: React.ComponentType, module: AppModule, permission: 
 // Public pages
 const LandingPage = lazy(() => import('@/pages/public/LandingPage'))
 const TeamPage = lazy(() => import('@/pages/public/TeamPage'))
+const HowItWorksPage = lazy(() => import('@/pages/public/HowItWorksPage'))
+const L2ValidatorPage = lazy(() => import('@/pages/public/L2ValidatorPage'))
 
 // Auth pages (public)
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage'))
@@ -77,6 +79,8 @@ export const router = createBrowserRouter([
   // Public routes
   { path: '/', element: wrap(LandingPage) },
   { path: '/team', element: wrap(TeamPage) },
+  { path: '/how-it-works', element: wrap(HowItWorksPage) },
+  { path: '/l2-validator', element: wrap(L2ValidatorPage) },
 
   // Auth routes
   { path: '/login', element: wrap(LoginPage) },
