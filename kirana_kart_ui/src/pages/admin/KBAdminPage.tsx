@@ -264,3 +264,5 @@ export function KBAdminPage() {
     </div>
   )
 }
+
+export default KBAdminPage
