@@ -31,8 +31,8 @@ const ANIMATION_CSS = `
     100% { transform: translateY(72px); opacity: 0; }
   }
   @keyframes heartbeat-line {
-    0%   { stroke-dashoffset: 200; }
-    100% { stroke-dashoffset: -200; }
+    from { stroke-dashoffset: 700; }
+    to   { stroke-dashoffset: 0; }
   }
   @keyframes bar-grow {
     from { width: 0%; }
@@ -525,26 +525,36 @@ export default function HowItWorksPage() {
 
           {/* Animated heartbeat bar */}
           <div className="mt-12 mx-auto max-w-md">
-            <svg viewBox="0 0 400 60" className="w-full" style={{ height: 60 }}>
+            <svg viewBox="0 0 400 64" className="w-full" style={{ height: 64 }}>
+              <defs>
+                <linearGradient id="hbGrad" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor="#3b82f6" stopOpacity="0" />
+                  <stop offset="35%" stopColor="#3b82f6" />
+                  <stop offset="65%" stopColor="#8b5cf6" />
+                  <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              {/* Faint static trace */}
               <path
-                d="M0,30 L60,30 L80,30 L90,10 L100,50 L110,20 L120,40 L130,30 L200,30 L220,30 L230,8 L240,52 L250,18 L260,42 L270,30 L340,30 L360,30 L370,12 L380,48 L390,25 L400,30"
+                d="M0,32 L72,32 C75,32 77,30 80,24 C83,18 85,8 88,4 C91,0 93,50 96,56 C98,60 101,46 104,38 C106,34 108,32 112,32 L188,32 C191,32 193,30 196,24 C199,18 201,8 204,4 C207,0 209,50 212,56 C214,60 217,46 220,38 C222,34 224,32 228,32 L400,32"
+                fill="none"
+                stroke="url(#hbGrad)"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity={0.18}
+              />
+              {/* Traveling highlight segment */}
+              <path
+                d="M0,32 L72,32 C75,32 77,30 80,24 C83,18 85,8 88,4 C91,0 93,50 96,56 C98,60 101,46 104,38 C106,34 108,32 112,32 L188,32 C191,32 193,30 196,24 C199,18 201,8 204,4 C207,0 209,50 212,56 C214,60 217,46 220,38 C222,34 224,32 228,32 L400,32"
                 fill="none"
                 stroke="url(#hbGrad)"
                 strokeWidth="2.5"
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                strokeDasharray="600"
-                strokeDashoffset="600"
+                strokeDasharray="140 560"
                 style={{ animation: 'heartbeat-line 3s linear infinite' }}
               />
-              <defs>
-                <linearGradient id="hbGrad" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0%" stopColor="#3b82f6" stopOpacity="0" />
-                  <stop offset="30%" stopColor="#3b82f6" />
-                  <stop offset="70%" stopColor="#8b5cf6" />
-                  <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0" />
-                </linearGradient>
-              </defs>
             </svg>
             <p className="text-xs text-slate-400 dark:text-zinc-500 text-center mt-2">Live ticket stream</p>
           </div>

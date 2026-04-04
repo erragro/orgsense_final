@@ -6,7 +6,7 @@ import { AccessGuard } from '@/components/layout/AccessGuard'
 import type { AppModule, Permission } from '@/lib/access'
 
 // Lazy imports for code splitting
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { Spinner } from '@/components/ui/Spinner'
 
 const Loading = () => (
@@ -15,9 +15,17 @@ const Loading = () => (
   </div>
 )
 
+// Scroll to top whenever a new route mounts
+const ScrollToTop = ({ children }: { children: React.ReactNode }) => {
+  useEffect(() => { window.scrollTo(0, 0) }, [])
+  return <>{children}</>
+}
+
 const wrap = (Component: React.ComponentType) => (
   <Suspense fallback={<Loading />}>
-    <Component />
+    <ScrollToTop>
+      <Component />
+    </ScrollToTop>
   </Suspense>
 )
 
