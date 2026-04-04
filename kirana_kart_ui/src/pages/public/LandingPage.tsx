@@ -248,10 +248,10 @@ export default function LandingPage() {
   const capabilities = [
     { icon: Cpu,           title: 'Cardinal Pipeline',  description: 'Every complaint gets the same expert treatment — identified, evaluated against your policies, and resolved. Automatically, every time.', accent: 'from-blue-600 to-blue-500',    href: '/how-it-works' },
     { icon: ShieldCheck,   title: 'L2 Validator',       description: 'Spots duplicate complaints and conflicting rules before they waste your team\'s time. A quality gate that never blinks.',             accent: 'from-violet-600 to-violet-500', href: '/l2-validator' },
-    { icon: BarChart3,     title: 'BI Agent',            description: 'Ask "How many refunds did we issue yesterday?" and get a chart. No spreadsheets, no data team, no waiting.',                        accent: 'from-emerald-600 to-teal-500' },
-    { icon: ClipboardCheck,title: 'QA Agent',            description: 'Every agent conversation is graded automatically. Not 10% of them — all of them, all the time.',                                   accent: 'from-orange-600 to-amber-500' },
-    { icon: LifeBuoy,      title: 'CRM & Ticket Ops',   description: 'Track every open case, automate follow-ups, and never miss a deadline. Your ops team\'s command centre.',                            accent: 'from-rose-600 to-pink-500' },
-    { icon: BookOpen,      title: 'Knowledge Base',      description: 'Keep your SOPs alive and searchable. Test a policy change in simulation before it goes live — no surprises.',                       accent: 'from-cyan-600 to-sky-500' },
+    { icon: BarChart3,     title: 'BI Agent',            description: 'Ask "How many refunds did we issue yesterday?" and get a chart. No spreadsheets, no data team, no waiting.',                        accent: 'from-emerald-600 to-teal-500',  href: '/bi-intelligence' },
+    { icon: ClipboardCheck,title: 'QA Agent',            description: 'Every agent conversation is graded automatically. Not 10% of them — all of them, all the time.',                                   accent: 'from-orange-600 to-amber-500',  href: '/quality-assurance' },
+    { icon: LifeBuoy,      title: 'CRM & Ticket Ops',   description: 'Track every open case, automate follow-ups, and never miss a deadline. Your ops team\'s command centre.',                            accent: 'from-rose-600 to-pink-500',     href: '/ticket-ops' },
+    { icon: BookOpen,      title: 'Knowledge Base',      description: 'Keep your SOPs alive and searchable. Test a policy change in simulation before it goes live — no surprises.',                       accent: 'from-cyan-600 to-sky-500',      href: '/knowledge-ops' },
   ]
 
   const dotGrid = theme === 'dark'

@@ -32,6 +32,10 @@ const LandingPage = lazy(() => import('@/pages/public/LandingPage'))
 const TeamPage = lazy(() => import('@/pages/public/TeamPage'))
 const HowItWorksPage = lazy(() => import('@/pages/public/HowItWorksPage'))
 const L2ValidatorPage = lazy(() => import('@/pages/public/L2ValidatorPage'))
+const BIAgentExplainerPage = lazy(() => import('@/pages/public/BIAgentPage'))
+const QAAgentExplainerPage = lazy(() => import('@/pages/public/QAAgentPage'))
+const CRMExplainerPage = lazy(() => import('@/pages/public/CRMExplainerPage'))
+const KBExplainerPage = lazy(() => import('@/pages/public/KnowledgeBasePage'))
 
 // Auth pages (public)
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage'))
@@ -81,6 +85,10 @@ export const router = createBrowserRouter([
   { path: '/team', element: wrap(TeamPage) },
   { path: '/how-it-works', element: wrap(HowItWorksPage) },
   { path: '/l2-validator', element: wrap(L2ValidatorPage) },
+  { path: '/bi-intelligence', element: wrap(BIAgentExplainerPage) },
+  { path: '/quality-assurance', element: wrap(QAAgentExplainerPage) },
+  { path: '/ticket-ops', element: wrap(CRMExplainerPage) },
+  { path: '/knowledge-ops', element: wrap(KBExplainerPage) },
 
   // Auth routes
   { path: '/login', element: wrap(LoginPage) },
