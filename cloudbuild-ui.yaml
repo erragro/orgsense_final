@@ -3,7 +3,7 @@ steps:
     entrypoint: 'sh'
     args:
       - '-c'
-      - 'cd kirana_kart_ui && npm ci && npm run build'
+      - 'cd kirana_kart_ui && npm ci && VITE_GOVERNANCE_API_URL=/api/governance VITE_INGEST_API_URL=/api/ingest npm run build'
 
   - name: 'gcr.io/cloud-builders/docker'
     args:
