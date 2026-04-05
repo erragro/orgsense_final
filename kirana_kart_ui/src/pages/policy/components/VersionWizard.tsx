@@ -268,9 +268,9 @@ function AIAnalysisStep({
     onSuccess: (res, _, context) => {
       clearInterval((context as { interval: ReturnType<typeof setInterval> }).interval)
       setProgress(100); setStatus('done')
-      const proposals = res.data
-      const newCount = proposals.filter((p: TaxonomyProposal) => p.proposal_type === 'new').length
-      const existingCount = proposals.filter((p: TaxonomyProposal) => p.proposal_type === 'existing').length
+      const proposals: TaxonomyProposal[] = (res.data as { proposals?: TaxonomyProposal[] }).proposals ?? []
+      const newCount = proposals.filter((p) => p.proposal_type === 'new').length
+      const existingCount = proposals.filter((p) => p.proposal_type === 'existing').length
       setFindings([
         `${proposals.length} issue categories identified`,
         newCount > 0 ? `${newCount} new categories to review` : 'All categories already in registry',
